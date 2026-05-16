@@ -5,3 +5,5 @@ artifacts/
 cache/
 tests/runner.test.ts
 tests/.tmp/
+tests/.bin/
+tests/.latest.json

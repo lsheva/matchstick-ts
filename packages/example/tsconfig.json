@@ -9,5 +9,5 @@
     "allowImportingTsExtensions": true,
     "types": ["node"]
   },
-  "include": ["integration/**/*.ts", "src/deploy-counter.ts", "tests/.tmp/**/*.d.ts"]
+  "include": ["integration/**/*.ts", "src/**/*.ts", "tests/.tmp/**/*.d.ts"]
 }

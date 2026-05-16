@@ -1,0 +1,43 @@
+/**
+ * Integration tests for matchstick-ts using hand-built events (no Hardhat).
+ * Fast path — still runs Matchstick against the real mapping in `src/mapping.ts`.
+ */
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { runMatchstickTest, readsFor } from "matchstick-ts";
+import { valueSetCaptured } from "./helpers.ts";
+
+describe("synthetic ValueSet → Counter entity", () => {
+  it("indexes a single event", async () => {
+    const snap = await runMatchstickTest({
+      events: [valueSetCaptured(99n)],
+      reads: [{ entityType: "Counter", id: "0" }],
+    });
+
+    assert.equal(snap.get("Counter", "0", "value"), "99");
+    assert.equal(snap.count("Counter"), 1);
+  });
+
+  it("applies events in order (last write wins)", async () => {
+    const snap = await runMatchstickTest({
+      events: [valueSetCaptured(10n), valueSetCaptured(20n, 2)],
+      reads: [{ entityType: "Counter", id: "0" }],
+    });
+
+    assert.equal(snap.entity("Counter", "0")?.value, "20");
+  });
+
+  it("readsFor + requested / null / undefined semantics", async () => {
+    const snap = await runMatchstickTest({
+      events: [valueSetCaptured(5n)],
+      reads: [...readsFor("Counter", ["0", "missing-id"])],
+    });
+
+    assert.equal(snap.get("Counter", "0", "value"), "5");
+    assert.equal(snap.entity("Counter", "missing-id"), null);
+    assert.equal(snap.requested("Counter", "missing-id"), true);
+    assert.equal(snap.has("Counter", "missing-id"), false);
+    assert.equal(snap.entity("Counter", "never-asked"), undefined);
+    assert.equal(snap.requested("Counter", "never-asked"), false);
+  });
+});

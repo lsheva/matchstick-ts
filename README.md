@@ -10,6 +10,7 @@ Replay captured EVM events through your mapping handlers, dump store entities as
 | --- | --- | --- |
 | [`packages/matchstick-ts`](packages/matchstick-ts/) | `matchstick-ts` | `runMatchstickTest`, `Snapshot`, `EventCapture`, codegen, AS helpers |
 | [`packages/hardhat-matchstick-ts`](packages/hardhat-matchstick-ts/) | `hardhat-matchstick-ts` | Hardhat 3 plugin + in-process node |
+| [`packages/example`](packages/example/) | — | Reference subgraph + **integration tests** (CI) |
 
 ## Install
 
@@ -72,7 +73,17 @@ describe("my flow", async () => {
 
 `runMatchstickTest` auto-codegen (default): writes `tests/runner.test.ts` and `tests/.tmp/entities.d.ts` before each run (idempotent).
 
-Full minimal subgraph: [`examples/counter`](examples/counter/).
+Reference subgraph + tests: [`packages/example`](packages/example/).
+
+If you have multiple Node integration files, run them with `--test-concurrency=1`. Node’s test runner executes files in parallel by default; concurrent `graph test` / Matchstick runs corrupt each other.
+
+## Testing this repo
+
+```bash
+pnpm test              # unit tests + example integration
+pnpm test:unit           # matchstick-ts only (fast)
+pnpm test:integration    # packages/example (Matchstick + optional Hardhat)
+```
 
 ## CLI
 
@@ -87,9 +98,7 @@ Optional when `autoCodegen: true` (default).
 
 ```bash
 pnpm install
-pnpm test              # unit + counter example
-pnpm test:unit
-pnpm test:example
+pnpm test
 pnpm typecheck
 ```
 
