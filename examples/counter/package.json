@@ -1,0 +1,27 @@
+{
+  "name": "subgraph-snapshot-example-counter",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "compile": "hardhat compile",
+    "codegen": "graph codegen",
+    "pretest": "pnpm compile && pnpm codegen",
+    "test": "node --test integration/*.test.ts"
+  },
+  "dependencies": {
+    "@graphprotocol/graph-ts": "0.37.0",
+    "subgraph-snapshot": "link:../.."
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@graphprotocol/graph-cli": "^0.98.1",
+    "assemblyscript": "^0.19.23",
+    "@nomicfoundation/hardhat-network-helpers": "^3.0.8",
+    "@nomicfoundation/hardhat-viem": "^3.0.7",
+    "hardhat": "^3.4.0",
+    "matchstick-as": "0.6.0",
+    "typescript": "^5.9.3",
+    "viem": "^2.37.9"
+  }
+}

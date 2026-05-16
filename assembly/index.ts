@@ -1,0 +1,265 @@
+/**
+ * AssemblyScript runtime for the subgraph-snapshot matchstick runner.
+ *
+ * Imported from the generated `tests/runner.test.ts` and compiled into the
+ * matchstick WASM module. Exposes:
+ *   - `createMockEvent<T>(params)` — turn a JSON params blob into a typed `ethereum.Event`
+ *   - `valueToJson` / `entityToJson` — serialize a store `Entity` back to JSON
+ *   - `JSONObjectBuilder` + `jsonString`/`jsonBool`/... — tiny JSON writer
+ *   - `address` / `uint` / `int` / `bytes` / `bool` — sugar constructors for
+ *     hand-rolled tests that build events directly
+ */
+import {
+  Address,
+  BigInt,
+  Bytes,
+  Entity,
+  Value,
+  ValueKind,
+  ethereum,
+  JSONValue,
+  JSONValueKind,
+  TypedMap,
+} from "@graphprotocol/graph-ts";
+import { newMockEvent } from "matchstick-as/assembly/index";
+
+/**
+ * Create a mock event from JSON params object.
+ * Generic over the event type T so handlers can accept the result.
+ */
+export function createMockEvent<T extends ethereum.Event>(
+  params: TypedMap<string, JSONValue>,
+): T {
+  const eventParams: ethereum.EventParam[] = [];
+
+  // Iterate the typed map's entries
+  for (let i = 0; i < params.entries.length; i++) {
+    const entry = params.entries[i];
+    const ethValue = jsonValueToEthereumValue(entry.value);
+    eventParams.push(new ethereum.EventParam(entry.key, ethValue));
+  }
+
+  const event = newMockEvent();
+  event.parameters = eventParams;
+  return changetype<T>(event);
+}
+
+/**
+ * AssemblyScript-friendly check whether a string is non-empty and digits only.
+ * (AS doesn't support JS regex literals reliably.)
+ */
+function isDigitsOnly(str: string): boolean {
+  if (str.length == 0) return false;
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    if (c < 48 || c > 57) return false;
+  }
+  return true;
+}
+
+/**
+ * Convert a JSON value to an Ethereum value.
+ */
+function jsonValueToEthereumValue(value: JSONValue): ethereum.Value {
+  if (value.kind == JSONValueKind.STRING) {
+    const str = value.toString();
+    if (str.startsWith("0x") && str.length == 42) {
+      return ethereum.Value.fromAddress(Address.fromString(str));
+    }
+    if (isDigitsOnly(str)) {
+      return ethereum.Value.fromUnsignedBigInt(BigInt.fromString(str));
+    }
+    if (str.startsWith("0x")) {
+      return ethereum.Value.fromBytes(Bytes.fromHexString(str) as Bytes);
+    }
+    return ethereum.Value.fromString(str);
+  }
+  if (value.kind == JSONValueKind.NUMBER) {
+    return ethereum.Value.fromSignedBigInt(BigInt.fromI64(value.toI64()));
+  }
+  if (value.kind == JSONValueKind.BOOL) {
+    return ethereum.Value.fromBoolean(value.toBool());
+  }
+  // Arrays/objects fall back to string representation.
+  return ethereum.Value.fromString(value.toString());
+}
+
+/**
+ * Helper to convert string to Address.
+ */
+export function address(value: string): Address {
+  return Address.fromString(value);
+}
+
+/**
+ * Helper to convert string to unsigned BigInt.
+ */
+export function uint(value: string): BigInt {
+  return BigInt.fromString(value);
+}
+
+/**
+ * Helper to convert string to signed BigInt.
+ */
+export function int(value: string): BigInt {
+  return BigInt.fromString(value);
+}
+
+/**
+ * Helper to convert hex string to Bytes.
+ */
+export function bytes(value: string): Bytes {
+  return Bytes.fromHexString(value) as Bytes;
+}
+
+/**
+ * Helper to convert boolean to Ethereum value.
+ */
+export function bool(value: boolean): ethereum.Value {
+  return ethereum.Value.fromBoolean(value);
+}
+
+/* -------------------------------------------------------------------------- *
+ * Minimal JSON serializer.
+ *
+ * graph-ts only exposes a JSON parser (json.fromBytes / JSONValue.toObject)
+ * and not a builder API, so we ship a tiny serializer that's good enough for
+ * emitting test results back to the orchestrator.
+ * -------------------------------------------------------------------------- */
+
+/**
+ * Escape a string for use as a JSON string literal (without surrounding quotes).
+ */
+function escapeJsonString(s: string): string {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c == 0x22 /* " */) out += '\\"';
+    else if (c == 0x5c /* \ */) out += "\\\\";
+    else if (c == 0x08) out += "\\b";
+    else if (c == 0x09) out += "\\t";
+    else if (c == 0x0a) out += "\\n";
+    else if (c == 0x0c) out += "\\f";
+    else if (c == 0x0d) out += "\\r";
+    else if (c < 0x20) {
+      const hex = c.toString(16);
+      out += "\\u" + "0000".substring(0, 4 - hex.length) + hex;
+    } else {
+      out += s.charAt(i);
+    }
+  }
+  return out;
+}
+
+/** Serialize a string as a JSON string (with quotes). */
+export function jsonString(s: string): string {
+  return '"' + escapeJsonString(s) + '"';
+}
+
+/** Serialize a boolean as JSON. */
+export function jsonBool(b: boolean): string {
+  return b ? "true" : "false";
+}
+
+/** Serialize a signed integer as JSON. */
+export function jsonNumber(n: i64): string {
+  return n.toString();
+}
+
+/** Serialize a JSON `null`. */
+export function jsonNull(): string {
+  return "null";
+}
+
+/** Serialize an array of pre-serialized JSON values. */
+export function jsonArray(items: Array<string>): string {
+  return "[" + items.join(",") + "]";
+}
+
+/**
+ * Builder for JSON objects. Each `set*` method appends a key/value pair and
+ * returns `this` for chaining; `toString()` finalizes the object literal.
+ */
+export class JSONObjectBuilder {
+  private parts: Array<string> = [];
+
+  setString(key: string, value: string): JSONObjectBuilder {
+    this.parts.push(jsonString(key) + ":" + jsonString(value));
+    return this;
+  }
+
+  setBool(key: string, value: boolean): JSONObjectBuilder {
+    this.parts.push(jsonString(key) + ":" + jsonBool(value));
+    return this;
+  }
+
+  setNumber(key: string, value: i64): JSONObjectBuilder {
+    this.parts.push(jsonString(key) + ":" + jsonNumber(value));
+    return this;
+  }
+
+  setRaw(key: string, value: string): JSONObjectBuilder {
+    this.parts.push(jsonString(key) + ":" + value);
+    return this;
+  }
+
+  toString(): string {
+    return "{" + this.parts.join(",") + "}";
+  }
+}
+
+/* -------------------------------------------------------------------------- *
+ * Entity → JSON serialization.
+ *
+ * Used by the runner to ship a snapshot of the matchstick store back to the
+ * orchestrator. Each `Value` is serialized to its most idiomatic JSON shape:
+ *   - String/Bytes/BigInt/BigDecimal/Int8/Timestamp → JSON string
+ *     (i64 and BigInt would lose precision as JSON numbers)
+ *   - Int (i32)                                     → JSON number
+ *   - Bool                                          → JSON bool
+ *   - Array                                         → JSON array (recursive)
+ *   - Null                                          → JSON null
+ * -------------------------------------------------------------------------- */
+
+export function valueToJson(value: Value): string {
+  if (value.kind == ValueKind.STRING) {
+    return jsonString(value.toString());
+  }
+  if (value.kind == ValueKind.INT) {
+    return jsonNumber(value.toI32() as i64);
+  }
+  if (value.kind == ValueKind.INT8 || value.kind == ValueKind.TIMESTAMP) {
+    return jsonString(value.toI64().toString());
+  }
+  if (value.kind == ValueKind.BIGDECIMAL) {
+    return jsonString(value.toBigDecimal().toString());
+  }
+  if (value.kind == ValueKind.BOOL) {
+    return jsonBool(value.toBoolean());
+  }
+  if (value.kind == ValueKind.BYTES) {
+    return jsonString(value.toBytes().toHexString());
+  }
+  if (value.kind == ValueKind.BIGINT) {
+    return jsonString(value.toBigInt().toString());
+  }
+  if (value.kind == ValueKind.ARRAY) {
+    const arr = value.toArray();
+    const items: Array<string> = [];
+    for (let i = 0; i < arr.length; i++) {
+      items.push(valueToJson(arr[i]));
+    }
+    return jsonArray(items);
+  }
+  return jsonNull();
+}
+
+/** Serialize every field on an Entity as a JSON object. */
+export function entityToJson(entity: Entity): string {
+  const builder = new JSONObjectBuilder();
+  const entries = entity.entries;
+  for (let i = 0; i < entries.length; i++) {
+    builder.setRaw(entries[i].key, valueToJson(entries[i].value));
+  }
+  return builder.toString();
+}

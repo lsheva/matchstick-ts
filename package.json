@@ -1,0 +1,68 @@
+{
+  "name": "subgraph-snapshot",
+  "version": "0.1.0",
+  "description": "Typed snapshot testing harness for The Graph subgraphs via Matchstick.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lsheva/subgraph-snapshot.git"
+  },
+  "bugs": "https://github.com/lsheva/subgraph-snapshot/issues",
+  "homepage": "https://github.com/lsheva/subgraph-snapshot#readme",
+  "keywords": [
+    "the-graph",
+    "subgraph",
+    "matchstick",
+    "assemblyscript",
+    "testing"
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./hardhat": "./src/hardhat.ts",
+    "./codegen": "./src/codegen/index.ts",
+    "./assembly": "./assembly/index.ts"
+  },
+  "bin": {
+    "subgraph-snapshot": "./src/bin/cli.ts"
+  },
+  "files": [
+    "src",
+    "assembly",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test tests/*.test.ts && pnpm --dir examples/counter test",
+    "test:unit": "node --test tests/*.test.ts",
+    "test:example": "pnpm --dir examples/counter test",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "graphql": "^16.11.0",
+    "yaml": "^2.5.0"
+  },
+  "peerDependencies": {
+    "@graphprotocol/graph-ts": ">=0.37",
+    "matchstick-as": ">=0.6",
+    "viem": "^2",
+    "hardhat": "^3",
+    "@nomicfoundation/hardhat-viem": "^3",
+    "@nomicfoundation/hardhat-network-helpers": "^3"
+  },
+  "peerDependenciesMeta": {
+    "hardhat": { "optional": true },
+    "@nomicfoundation/hardhat-viem": { "optional": true },
+    "@nomicfoundation/hardhat-network-helpers": { "optional": true }
+  },
+  "devDependencies": {
+    "@graphprotocol/graph-ts": "0.37.0",
+    "@nomicfoundation/hardhat-network-helpers": "^3.0.8",
+    "@nomicfoundation/hardhat-viem": "^3.0.7",
+    "@types/node": "^22.0.0",
+    "matchstick-as": "0.6.0",
+    "viem": "^2.37.9",
+    "hardhat": "^3.4.0",
+    "typescript": "^5.9.3"
+  }
+}
