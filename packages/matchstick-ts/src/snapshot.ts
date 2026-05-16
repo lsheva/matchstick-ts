@@ -51,7 +51,7 @@ export type DefaultEntityMap = Record<string, EntityFields>;
  * Augmentable entity registry — Hardhat-`artifacts.d.ts`-style. The
  * generated `entities.d.ts` re-opens this interface via:
  *
- *   declare module "subgraph-snapshot" {
+ *   declare module "matchstick-ts" {
  *     interface Entities {
  *       Futures: Futures;
  *       User: User;
@@ -113,7 +113,7 @@ export interface RunOptions<TEntities = AugmentedEntities> {
   runnerPath?: string;
   /**
    * Output path for the generated `entities.d.ts` (TS module augmentation
-   * for `subgraph-snapshot`'s `Entities` interface). Defaults to
+   * for `matchstick-ts`'s `Entities` interface). Defaults to
    * `tests/.tmp/entities.d.ts`.
    *
    * The file is purely a TypeScript declaration — never loaded at runtime.

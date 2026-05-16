@@ -1,6 +1,6 @@
 # Counter example
 
-Minimal subgraph that demonstrates **subgraph-snapshot** end to end:
+Minimal subgraph that demonstrates **matchstick-ts** end to end:
 
 1. Deploy `Counter` on an in-process Hardhat node
 2. Call `setValue` and capture `ValueSet` with `EventCapture`

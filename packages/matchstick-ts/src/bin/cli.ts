@@ -1,24 +1,24 @@
 #!/usr/bin/env node
 /**
  * CLI for the codegen step. Two subcommands:
- *   subgraph-snapshot generate-runner   <subgraph.yaml>   <out.test.ts>
- *   subgraph-snapshot generate-entities <schema.graphql>  <out.ts>
+ *   matchstick-ts generate-runner   <subgraph.yaml>   <out.test.ts>
+ *   matchstick-ts generate-entities <schema.graphql>  <out.ts>
  */
 import { generateRunner, generateEntities } from "../codegen/index.ts";
 
 const USAGE = `Usage:
-  subgraph-snapshot generate-runner   <subgraph.yaml>  <output.test.ts>  [--assembly <import-specifier>] [--temp-dir <path>]
-  subgraph-snapshot generate-entities <schema.graphql> <output.d.ts>     [--module-specifier <name>]
+  matchstick-ts generate-runner   <subgraph.yaml>  <output.test.ts>  [--assembly <import-specifier>] [--temp-dir <path>]
+  matchstick-ts generate-entities <schema.graphql> <output.d.ts>     [--module-specifier <name>]
 
 Note: When using \`runMatchstickTest\` with \`autoCodegen: true\` (the default),
 neither subcommand is required — codegen runs in-process on each test call.
 This CLI is retained for explicit / CI-driven workflows.
 
 Options:
-  --assembly           AS import specifier for the runner template (default: subgraph-snapshot/assembly)
+  --assembly           AS import specifier for the runner template (default: matchstick-ts/assembly)
   --temp-dir           Directory the runner reads JSON IO from (default: tests/.tmp)
                        Must match RunOptions.jsonDir on the TS side.
-  --module-specifier   Module name to augment (default: subgraph-snapshot).
+  --module-specifier   Module name to augment (default: matchstick-ts).
                        Set this if you've installed the package under a different name.
 `;
 

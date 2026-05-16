@@ -1,0 +1,48 @@
+{
+  "name": "hardhat-matchstick-ts",
+  "version": "0.1.0",
+  "description": "Hardhat 3 plugin for matchstick-ts subgraph snapshot tests.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lsheva/matchstick-ts.git",
+    "directory": "packages/hardhat-matchstick-ts"
+  },
+  "bugs": "https://github.com/lsheva/matchstick-ts/issues",
+  "homepage": "https://github.com/lsheva/matchstick-ts#readme",
+  "keywords": [
+    "hardhat",
+    "hardhat-plugin",
+    "the-graph",
+    "subgraph",
+    "matchstick"
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./node": "./src/node-entry.ts",
+    "./config": "./src/type-extensions.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "matchstick-ts": "workspace:*"
+  },
+  "peerDependencies": {
+    "hardhat": "^3",
+    "@nomicfoundation/hardhat-viem": "^3",
+    "@nomicfoundation/hardhat-network-helpers": "^3"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-network-helpers": "^3.0.8",
+    "@nomicfoundation/hardhat-viem": "^3.0.7",
+    "@types/node": "^22.0.0",
+    "hardhat": "^3.4.0",
+    "matchstick-ts": "workspace:*",
+    "typescript": "^5.9.3"
+  }
+}

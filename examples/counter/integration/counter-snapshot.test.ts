@@ -1,14 +1,14 @@
 /**
  * End-to-end example: deploy Counter on Hardhat, capture ValueSet, replay via
- * subgraph-snapshot + Matchstick, assert on the indexed Counter entity.
+ * matchstick-ts + Matchstick, assert on the indexed Counter entity.
  */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { runMatchstickTest, EventCapture, viewFunctionRevertMocks } from "subgraph-snapshot";
-import { getOrCreateNode } from "subgraph-snapshot/hardhat";
+import { runMatchstickTest, EventCapture, viewFunctionRevertMocks } from "matchstick-ts";
+import { getOrCreateNode } from "hardhat-matchstick-ts/node";
 import { deployCounter } from "../src/deploy-counter.ts";
 
-describe("Counter ValueSet via subgraph-snapshot", async () => {
+describe("Counter ValueSet via matchstick-ts", async () => {
   const node = await getOrCreateNode();
   const { conn } = node;
   let capture: EventCapture;

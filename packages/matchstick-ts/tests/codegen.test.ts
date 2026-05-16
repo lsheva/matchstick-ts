@@ -15,7 +15,7 @@ describe("generateEntities", () => {
         outputPath,
       });
       const text = await readFile(outputPath, "utf8");
-      assert.match(text, /declare module "subgraph-snapshot"/);
+      assert.match(text, /declare module "matchstick-ts"/);
       assert.match(text, /interface Counter \{/);
       assert.match(text, /value: string;/);
       assert.match(text, /interface Entities \{/);

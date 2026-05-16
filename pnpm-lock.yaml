@@ -6,48 +6,16 @@ settings:
 
 importers:
 
-  .:
-    dependencies:
-      graphql:
-        specifier: ^16.11.0
-        version: 16.14.0
-      yaml:
-        specifier: ^2.5.0
-        version: 2.9.0
-    devDependencies:
-      '@graphprotocol/graph-ts':
-        specifier: 0.37.0
-        version: 0.37.0
-      '@nomicfoundation/hardhat-network-helpers':
-        specifier: ^3.0.8
-        version: 3.0.8(hardhat@3.4.5)
-      '@nomicfoundation/hardhat-viem':
-        specifier: ^3.0.7
-        version: 3.0.7(hardhat@3.4.5)(viem@2.49.3(typescript@5.9.3)(zod@3.25.76))
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.19
-      hardhat:
-        specifier: ^3.4.0
-        version: 3.4.5
-      matchstick-as:
-        specifier: 0.6.0
-        version: 0.6.0
-      typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
-      viem:
-        specifier: ^2.37.9
-        version: 2.49.3(typescript@5.9.3)(zod@3.25.76)
+  .: {}
 
   examples/counter:
     dependencies:
       '@graphprotocol/graph-ts':
         specifier: 0.37.0
         version: 0.37.0
-      subgraph-snapshot:
-        specifier: link:../..
-        version: link:../..
+      matchstick-ts:
+        specifier: workspace:*
+        version: link:../../packages/matchstick-ts
     devDependencies:
       '@graphprotocol/graph-cli':
         specifier: ^0.98.1
@@ -67,6 +35,56 @@ importers:
       hardhat:
         specifier: ^3.4.0
         version: 3.4.5
+      hardhat-matchstick-ts:
+        specifier: workspace:*
+        version: link:../../packages/hardhat-matchstick-ts
+      matchstick-as:
+        specifier: 0.6.0
+        version: 0.6.0
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      viem:
+        specifier: ^2.37.9
+        version: 2.49.3(typescript@5.9.3)(zod@3.25.76)
+
+  packages/hardhat-matchstick-ts:
+    dependencies:
+      matchstick-ts:
+        specifier: workspace:*
+        version: link:../matchstick-ts
+    devDependencies:
+      '@nomicfoundation/hardhat-network-helpers':
+        specifier: ^3.0.8
+        version: 3.0.8(hardhat@3.4.5)
+      '@nomicfoundation/hardhat-viem':
+        specifier: ^3.0.7
+        version: 3.0.7(hardhat@3.4.5)(viem@2.49.3(typescript@5.9.3)(zod@3.25.76))
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.19
+      hardhat:
+        specifier: ^3.4.0
+        version: 3.4.5
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
+  packages/matchstick-ts:
+    dependencies:
+      graphql:
+        specifier: ^16.11.0
+        version: 16.14.0
+      yaml:
+        specifier: ^2.5.0
+        version: 2.9.0
+    devDependencies:
+      '@graphprotocol/graph-ts':
+        specifier: 0.37.0
+        version: 0.37.0
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.19
       matchstick-as:
         specifier: 0.6.0
         version: 0.6.0

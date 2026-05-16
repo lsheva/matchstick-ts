@@ -1,5 +1,5 @@
 {
-  "name": "subgraph-snapshot-example-counter",
+  "name": "matchstick-ts-example-counter",
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@graphprotocol/graph-ts": "0.37.0",
-    "subgraph-snapshot": "link:../.."
+    "matchstick-ts": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -20,6 +20,7 @@
     "@nomicfoundation/hardhat-network-helpers": "^3.0.8",
     "@nomicfoundation/hardhat-viem": "^3.0.7",
     "hardhat": "^3.4.0",
+    "hardhat-matchstick-ts": "workspace:*",
     "matchstick-as": "0.6.0",
     "typescript": "^5.9.3",
     "viem": "^2.37.9"

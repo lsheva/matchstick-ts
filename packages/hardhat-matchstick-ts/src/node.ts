@@ -1,7 +1,7 @@
 /**
- * Optional Hardhat 3 in-process node helper. Imported via
- * `subgraph-snapshot/hardhat` so users on anvil / Foundry can skip pulling
- * Hardhat as a peer dependency.
+ * In-process Hardhat 3 JSON-RPC node for matchstick-ts integration tests.
+ * Exported from `hardhat-matchstick-ts` (not `matchstick-ts`) so consumers
+ * without Hardhat never pull it in as a dependency.
  */
 import "@nomicfoundation/hardhat-viem";
 import "@nomicfoundation/hardhat-network-helpers";

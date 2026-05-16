@@ -50,7 +50,7 @@ export interface GenerateRunnerOptions {
   outputPath: string;
   /**
    * AS module specifier that exports `createMockEvent`, `JSONObjectBuilder`,
-   * `entityToJson`. Defaults to `subgraph-snapshot/assembly` — override if
+   * `entityToJson`. Defaults to `matchstick-ts/assembly` — override if
    * you've installed the package under a different name.
    */
   assemblyImport?: string;
@@ -67,7 +67,7 @@ export const DEFAULT_TMP_DIR = "tests/.tmp";
 
 export async function generateRunner(options: GenerateRunnerOptions): Promise<void> {
   const { subgraphYamlPath, outputPath } = options;
-  const assemblyImport = options.assemblyImport ?? "subgraph-snapshot/assembly";
+  const assemblyImport = options.assemblyImport ?? "matchstick-ts/assembly";
   const tempDir = options.tempDir ?? DEFAULT_TMP_DIR;
 
   const yaml = parse(await readFile(subgraphYamlPath, "utf8")) as SubgraphManifest;

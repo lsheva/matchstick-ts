@@ -1,5 +1,5 @@
 /**
- * AssemblyScript runtime for the subgraph-snapshot matchstick runner.
+ * AssemblyScript runtime for the matchstick-ts matchstick runner.
  *
  * Imported from the generated `tests/runner.test.ts` and compiled into the
  * matchstick WASM module. Exposes:
