@@ -13,6 +13,6 @@ export function valueSetCaptured(newValue: bigint, blockNumber = 1): CapturedEve
     address: COUNTER_ADDRESS,
     blockNumber,
     transactionHash: TX_HASH,
-    params: { newValue: newValue.toString() },
+    params: [["newValue", newValue.toString()]],
   };
 }

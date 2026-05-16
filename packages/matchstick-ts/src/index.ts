@@ -22,8 +22,13 @@ export type {
   AugmentedDataSources,
   EntityKey,
 } from "./snapshot.ts";
-export { EventCapture, viewFunctionRevertMocks } from "./event-capture.ts";
-export type { CapturedEvent, RevertMock, ReceiptAwaitingClient } from "./event-capture.ts";
+export { EventCapture, serializeParams, viewFunctionRevertMocks } from "./event-capture.ts";
+export type {
+  CapturedEvent,
+  ParamEntry,
+  RevertMock,
+  ReceiptAwaitingClient,
+} from "./event-capture.ts";
 export { MatchstickHarness } from "./harness.ts";
 export type { MatchstickHarnessOptions } from "./harness.ts";
 export { SubgraphLogSync } from "./log-sync.ts";

@@ -31,12 +31,30 @@ export interface ReceiptAwaitingClient {
   }>;
 }
 
+/**
+ * One event parameter, captured in ABI declaration order.
+ *
+ * - `name` is the ABI input name (purely for inspection — the AS runner accesses
+ *   `event.parameters[i]` positionally).
+ * - `value` is the native JSON representation: `bigint` and large numbers are
+ *   stringified (JSON has no bigint), booleans stay booleans, hex strings stay
+ *   strings, tuples/arrays/structs are JSON-stringified. The AS side recovers
+ *   the Ethereum kind heuristically (see `jsonValueToEthereumValue`).
+ */
+export type ParamEntry = [name: string, value: string | number | boolean];
+
 export interface CapturedEvent {
   event: string;
   address: Address;
   blockNumber: number;
   transactionHash: Hex;
-  params: Record<string, string>;
+  /**
+   * Parameters in ABI declaration order — `graph-ts`'s `JSONValue.toObject()`
+   * does NOT preserve insertion order, so an ordered array is the only way to
+   * line up with positional `event.parameters[i]` accessors in generated
+   * AssemblyScript event classes.
+   */
+  params: ParamEntry[];
 }
 
 export interface RevertMock {
@@ -127,22 +145,30 @@ export class EventCapture {
     this.events = [];
   }
 
-  private serializeParams(args: unknown): Record<string, string> {
-    const result: Record<string, string> = {};
-    if (args === null || typeof args !== "object") return result;
-
-    for (const [key, value] of Object.entries(args)) {
-      if (typeof value === "bigint") {
-        result[key] = value.toString();
-      } else if (typeof value === "string" && value.startsWith("0x")) {
-        result[key] = value.toLowerCase();
-      } else if (typeof value === "object" && value !== null) {
-        result[key] = JSON.stringify(value);
-      } else {
-        result[key] = String(value);
-      }
-    }
-
-    return result;
+  private serializeParams(args: unknown): ParamEntry[] {
+    return serializeParams(args);
   }
+}
+
+/** Internal — shared by {@link EventCapture} and the log-sync ingester. */
+export function serializeParams(args: unknown): ParamEntry[] {
+  if (args === null || typeof args !== "object") return [];
+
+  const result: ParamEntry[] = [];
+  for (const [key, value] of Object.entries(args)) {
+    if (typeof value === "bigint") {
+      result.push([key, value.toString()]);
+    } else if (typeof value === "boolean") {
+      result.push([key, value]);
+    } else if (typeof value === "number") {
+      result.push([key, value]);
+    } else if (typeof value === "string" && value.startsWith("0x")) {
+      result.push([key, value.toLowerCase()]);
+    } else if (typeof value === "object" && value !== null) {
+      result.push([key, JSON.stringify(value)]);
+    } else {
+      result.push([key, String(value)]);
+    }
+  }
+  return result;
 }

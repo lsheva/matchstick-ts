@@ -19,24 +19,30 @@ import {
   ethereum,
   JSONValue,
   JSONValueKind,
-  TypedMap,
 } from "@graphprotocol/graph-ts";
 import { newMockEvent } from "matchstick-as/assembly/index";
 
 /**
- * Create a mock event from JSON params object.
- * Generic over the event type T so handlers can accept the result.
+ * Create a mock event from an ordered params array.
+ *
+ * Wire format (emitted by `serializeParams` on the TS side):
+ *   params: [["name1", value1], ["name2", value2], ...]
+ *
+ * An array (not an object) is required because `graph-ts`'s
+ * `JSONValue.toObject()` does NOT preserve insertion order, while generated
+ * AS event classes access `event.parameters[i]` positionally. The `name`
+ * field is forwarded to `ethereum.EventParam` purely for inspection — it
+ * does not affect dispatch.
  */
-export function createMockEvent<T extends ethereum.Event>(
-  params: TypedMap<string, JSONValue>,
-): T {
+export function createMockEvent<T extends ethereum.Event>(params: JSONValue): T {
+  const entries = params.toArray();
   const eventParams: ethereum.EventParam[] = [];
 
-  // Iterate the typed map's entries
-  for (let i = 0; i < params.entries.length; i++) {
-    const entry = params.entries[i];
-    const ethValue = jsonValueToEthereumValue(entry.value);
-    eventParams.push(new ethereum.EventParam(entry.key, ethValue));
+  for (let i = 0; i < entries.length; i++) {
+    const pair = entries[i].toArray();
+    const name = pair[0].toString();
+    const ethValue = jsonValueToEthereumValue(pair[1]);
+    eventParams.push(new ethereum.EventParam(name, ethValue));
   }
 
   const event = newMockEvent();

@@ -137,7 +137,10 @@ test("process events and dump store snapshot", () => {
   for (let i = 0; i < events.length; i++) {
     const evt = events[i].toObject();
     const eventName = evt.get("event")!.toString();
-    const params = evt.get("params")!.toObject();
+    // Pass the JSONValue directly — createMockEvent expects the ordered
+    // array shape \`[[name, value], ...]\`. Calling \`.toObject()\` here would
+    // discard ABI order (TypedMap iteration is not insertion-ordered).
+    const params = evt.get("params")!;
 
     if (false) {
 ${routes.join("\n")}

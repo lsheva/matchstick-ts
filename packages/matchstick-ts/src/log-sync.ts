@@ -5,6 +5,7 @@
  */
 import { parseEventLogs, type Abi, type Address, type Log } from "viem";
 import {
+  serializeParams,
   viewFunctionRevertMocks,
   type CapturedEvent,
   type RevertMock,
@@ -68,24 +69,6 @@ export interface SubgraphLogSyncOptions<TEntities = AugmentedEntities> {
 
 function mockKey(mock: RevertMock): string {
   return `${mock.address}:${mock.signature}`;
-}
-
-function serializeParams(args: unknown): Record<string, string> {
-  const result: Record<string, string> = {};
-  if (args === null || typeof args !== "object") return result;
-
-  for (const [key, value] of Object.entries(args)) {
-    if (typeof value === "bigint") {
-      result[key] = value.toString();
-    } else if (typeof value === "string" && value.startsWith("0x")) {
-      result[key] = value.toLowerCase();
-    } else if (typeof value === "object" && value !== null) {
-      result[key] = JSON.stringify(value);
-    } else {
-      result[key] = String(value);
-    }
-  }
-  return result;
 }
 
 function decodeLogs(logs: readonly Log[], abi: Abi): CapturedEvent[] {
