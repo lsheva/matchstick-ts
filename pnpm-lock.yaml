@@ -54,7 +54,7 @@ importers:
   packages/hardhat-matchstick-ts:
     dependencies:
       matchstick-ts:
-        specifier: workspace:*
+        specifier: link:../matchstick-ts
         version: link:../matchstick-ts
     devDependencies:
       '@nomicfoundation/hardhat-network-helpers':

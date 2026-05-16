@@ -46,15 +46,16 @@
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "scripts"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "prepublishOnly": "pnpm run build",
+    "prepare": "node ./scripts/prepare.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "matchstick-ts": "workspace:*"
+    "matchstick-ts": "link:../matchstick-ts"
   },
   "peerDependencies": {
     "hardhat": "^3",

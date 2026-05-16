@@ -45,7 +45,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "prepublishOnly": "pnpm run build",
+    "prepare": "pnpm run build",
     "test": "node --test tests/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
