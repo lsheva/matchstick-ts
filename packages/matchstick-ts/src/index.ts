@@ -5,6 +5,7 @@ export {
   readsFor,
   indexResultsFromSnapshot,
   cleanupJsonFiles,
+  cleanupGeneratedFiles,
   DEFAULT_TMP_DIR,
 } from "./snapshot.ts";
 export type {

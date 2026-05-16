@@ -396,6 +396,11 @@ export async function runMatchstickTest<TEntities = AugmentedEntities>(
 /**
  * Remove the JSON IO files written by `runMatchstickTest`. Honors the
  * `KEEP_TEMP=1` env var (set by `test:integration:debug` scripts).
+ *
+ * Per-call cleanup — leaves the auto-generated `tests/runner.test.ts` and
+ * `entities.d.ts` in place so subsequent `runMatchstickTest` calls can reuse
+ * them. Use {@link cleanupGeneratedFiles} from an `after()` hook to nuke
+ * everything once the test suite is done.
  */
 export async function cleanupJsonFiles(jsonDir: string): Promise<void> {
   if (process.env.KEEP_TEMP) {
@@ -406,4 +411,36 @@ export async function cleanupJsonFiles(jsonDir: string): Promise<void> {
   await rm(join(jsonDir, "events.json"), { force: true });
   await rm(join(jsonDir, "reads.json"), { force: true });
   await rm(join(jsonDir, "mocks.json"), { force: true });
+}
+
+/**
+ * Remove every file the matchstick-ts codegen + runner produce: the
+ * auto-generated AS runner test file and the entire JSON IO directory
+ * (which includes the leftover `entities.d.ts` augmentation file).
+ *
+ * Call this from an `after()` hook so `graph test` doesn't pick up the
+ * runner.test.ts during a subsequent unit-test run. Honors `KEEP_TEMP=1`.
+ *
+ * `SubgraphLogSync.reset()` invokes this with the indexer's configured
+ * paths, so the typical consumer just writes `after(() => conn.matchstick.reset())`.
+ */
+export async function cleanupGeneratedFiles(opts: {
+  runnerPath?: string;
+  jsonDir?: string;
+}): Promise<void> {
+  if (process.env.KEEP_TEMP) {
+    console.log(
+      `Keeping generated files: ${opts.runnerPath ?? "<no runner>"} ${opts.jsonDir ?? "<no jsonDir>"}`,
+    );
+    return;
+  }
+
+  const tasks: Promise<unknown>[] = [];
+  if (opts.runnerPath !== undefined) {
+    tasks.push(rm(opts.runnerPath, { force: true }));
+  }
+  if (opts.jsonDir !== undefined) {
+    tasks.push(rm(opts.jsonDir, { recursive: true, force: true }));
+  }
+  await Promise.all(tasks);
 }

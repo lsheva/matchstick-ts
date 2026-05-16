@@ -11,6 +11,8 @@ import {
   type RevertMock,
 } from "./event-capture.ts";
 import {
+  cleanupGeneratedFiles,
+  DEFAULT_TMP_DIR,
   indexResultsFromSnapshot,
   runMatchstickTest,
   type AugmentedDataSources,
@@ -244,11 +246,23 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
     return indexResultsFromSnapshot(snapshot, reads);
   }
 
-  reset(): void {
+  /**
+   * Clear in-memory state AND remove generated test artifacts (the AS runner
+   * file and the JSON IO directory). Intended for `after()` hooks so a
+   * subsequent `graph test` run doesn't accidentally pick up the auto-
+   * generated `tests/runner.test.ts`.
+   *
+   * Honors `KEEP_TEMP=1` — see {@link cleanupGeneratedFiles}.
+   */
+  async reset(): Promise<void> {
     this.bindings.clear();
     this.revertMocks.clear();
     this.events = [];
     this.syncedBlock = undefined;
+    await cleanupGeneratedFiles({
+      runnerPath: this.runDefaults.runnerPath ?? "tests/runner.test.ts",
+      jsonDir: this.runDefaults.jsonDir ?? DEFAULT_TMP_DIR,
+    });
   }
 
   private resolveBindings(names: readonly AugmentedDataSources[] | undefined): DataSourceBinding[] {
