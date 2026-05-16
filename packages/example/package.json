@@ -8,9 +8,10 @@
     "compile": "hardhat compile",
     "codegen": "graph codegen",
     "pretest": "pnpm codegen && pnpm compile",
-    "test": "node --test --test-concurrency=1 integration/*.test.ts",
-    "test:fast": "pnpm codegen && node --test integration/synthetic-events.test.ts",
-    "test:e2e": "pnpm pretest && node --test --test-concurrency=1 integration/hardhat-e2e.test.ts"
+    "test": "hardhat test nodejs",
+    "test:fast": "pnpm codegen && hardhat test nodejs integration/synthetic-events.test.ts",
+    "test:e2e": "pnpm pretest && hardhat test nodejs integration/hardhat-e2e.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@graphprotocol/graph-ts": "0.37.0",
@@ -19,6 +20,7 @@
   "devDependencies": {
     "@graphprotocol/graph-cli": "^0.98.1",
     "@nomicfoundation/hardhat-network-helpers": "^3.0.8",
+    "@nomicfoundation/hardhat-node-test-runner": "^3.0.8",
     "@nomicfoundation/hardhat-viem": "^3.0.7",
     "@types/node": "^22.0.0",
     "assemblyscript": "^0.19.23",

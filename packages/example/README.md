@@ -10,9 +10,9 @@ schema.graphql            # Counter @entity
 src/mapping.ts            # handleValueSet
 subgraph.yaml
 hardhat.config.ts         # hardhat-matchstick-ts plugin + matchstick { … }
-integration/                  # Node test runner (not Matchstick)
+integration/                  # `hardhat test nodejs` (not Matchstick)
   synthetic-events.test.ts   # fast — hand-built events, no chain
-  hardhat-e2e.test.ts         # full — deploy, receipt, EventCapture
+  hardhat-e2e.test.ts         # full — `network.create()` + conn.matchstick
   helpers.ts
 tests/                        # Matchstick-generated (gitignored)
   runner.test.ts
@@ -44,6 +44,15 @@ pnpm test
 | Test | Stack |
 | --- | --- |
 | `integration/synthetic-events.test.ts` | `runMatchstickTest`, `readsFor`, snapshot null/undefined semantics |
-| `integration/hardhat-e2e.test.ts` | `hardhat-matchstick-ts/node`, `EventCapture`, `viewFunctionRevertMocks` |
+| `integration/hardhat-e2e.test.ts` | `network.getOrCreate()`, `conn.matchstick` (`bind`, `anchor`, `index`) |
 
 Generated at runtime (gitignored): `tests/runner.test.ts`, `tests/.tmp/entities.d.ts`.
+
+## `conn.matchstick.index`
+
+Each `index(reads)` call:
+
+1. **Ingests** new chain logs since `lastSyncedBlock` (incremental `getLogs`).
+2. **Replays every buffered event from the beginning** through Matchstick (fresh store; not incremental).
+
+Use `anchor()` after deploy to avoid replaying unrelated history. Call `reset()` after `loadFixture`.

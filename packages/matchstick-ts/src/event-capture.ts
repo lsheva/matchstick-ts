@@ -113,6 +113,11 @@ export class EventCapture {
     return this.events;
   }
 
+  /** Append events without going through a receipt (synthetic / fixture data). */
+  appendEvents(events: CapturedEvent[]): void {
+    this.events.push(...events);
+  }
+
   /** Snapshot the captured events for passing to `runMatchstickTest`. */
   serialize(): CapturedEvent[] {
     return this.events;

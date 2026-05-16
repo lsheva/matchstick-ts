@@ -1,51 +1,57 @@
 /**
- * Full-stack integration: Hardhat deploy → viem receipt → EventCapture → Matchstick.
- * Exercises hardhat-matchstick-ts/node and contract revert mocks.
+ * Full-stack integration: deploy → bind → index.
+ * Each index() replays the full event buffer from the start (see package README).
  */
-import { describe, it, before, after } from "node:test";
+import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import {
-  runMatchstickTest,
-  EventCapture,
-  viewFunctionRevertMocks,
-  readsFor,
-} from "matchstick-ts";
-import { getOrCreateNode } from "hardhat-matchstick-ts/node";
+import { network } from "hardhat";
+import { read } from "matchstick-ts";
 import { deployCounter } from "../src/deploy-counter.ts";
 
-describe("Hardhat → Matchstick → Counter", async () => {
-  const node = await getOrCreateNode();
-  const { conn } = node;
-  let capture: EventCapture;
+const conn = await network.getOrCreate();
 
-  before(async () => {
-    capture = new EventCapture(await conn.viem.getPublicClient());
-  });
-
-  it("indexes setValue from a real transaction", async () => {
+describe("Hardhat → Matchstick → Counter", () => {
+  it("indexes setValue from chain logs", async () => {
     const { counter, abi, address } = await deployCounter(conn);
     const walletClients = await conn.viem.getWalletClients();
     const wallet = walletClients[0];
 
-    const newFee = 42n;
-    const txHash = await counter.write.setValue([newFee], { account: wallet.account });
-    await capture.captureFromReceipt(txHash, abi);
+    conn.matchstick.bind("Counter", address, abi);
+    await conn.matchstick.anchor();
 
-    // Paths default to subgraph.yaml / schema.graphql in this package (also set under
-    // `matchstick` in hardhat.config.ts via matchstickRunOptionsFromConfig).
-    const snap = await runMatchstickTest({
-      events: capture.serialize(),
-      reads: readsFor("Counter", ["0"]),
-      revertMocks: viewFunctionRevertMocks(abi, address),
+    const newFee = 42n;
+    await counter.write.setValue([newFee], {
+      account: wallet.account,
+      chain: wallet.chain,
     });
 
-    assert.equal(snap.get("Counter", "0", "value"), newFee.toString());
-    const entity = snap.entity("Counter", "0");
+    const [entity] = await conn.matchstick.index([read("Counter", "0")]);
+
     assert.ok(entity);
-    assert.equal(entity.value, "42");
+    assert.equal(entity.value, newFee.toString());
+    assert.equal(conn.matchstick.eventCount, 1);
   });
 
-  after(async () => {
-    await node.close();
+  it("second index() only ingests blocks after the first", async () => {
+    const { counter, abi, address } = await deployCounter(conn);
+    conn.matchstick.reset();
+    conn.matchstick.bind("Counter", address, abi);
+    await conn.matchstick.anchor();
+
+    const wallet = (await conn.viem.getWalletClients())[0];
+    const reads = [read("Counter", "0")] as const;
+
+    await counter.write.setValue([1n], { account: wallet.account, chain: wallet.chain });
+    await conn.matchstick.index(reads);
+    const blockAfterFirst = conn.matchstick.lastSyncedBlock;
+
+    await counter.write.setValue([2n], { account: wallet.account, chain: wallet.chain });
+    const [entity] = await conn.matchstick.index(reads);
+
+    assert.ok(entity);
+    assert.equal(entity.value, "2");
+    assert.equal(conn.matchstick.eventCount, 2);
+    assert.ok(blockAfterFirst !== undefined);
+    assert.ok(conn.matchstick.lastSyncedBlock! > blockAfterFirst);
   });
 });

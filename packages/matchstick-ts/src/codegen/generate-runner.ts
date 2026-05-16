@@ -11,23 +11,9 @@
  * Handler imports are grouped by mapping file (each data source's
  * `mapping.file`) so multi-mapping subgraphs work without modification.
  */
-import { readFile } from "node:fs/promises";
 import { dirname, relative } from "node:path";
-import { parse } from "yaml";
+import { readSubgraphManifest } from "./parse-subgraph-manifest.ts";
 import { writeIfChanged } from "./_shared.ts";
-
-interface DataSource {
-  name: string;
-  source: { abi: string };
-  mapping: {
-    file: string;
-    eventHandlers: { event: string; handler: string }[];
-  };
-}
-
-interface SubgraphManifest {
-  dataSources: DataSource[];
-}
 
 /**
  * Convert a mapping file path (as it appears in subgraph.yaml, relative to
@@ -70,7 +56,7 @@ export async function generateRunner(options: GenerateRunnerOptions): Promise<vo
   const assemblyImport = options.assemblyImport ?? "matchstick-ts/assembly";
   const tempDir = options.tempDir ?? DEFAULT_TMP_DIR;
 
-  const yaml = parse(await readFile(subgraphYamlPath, "utf8")) as SubgraphManifest;
+  const yaml = await readSubgraphManifest(subgraphYamlPath);
 
   // Group handler imports by mapping file (relative to manifest), and event
   // types by ABI name. Preserve insertion order for stable output.

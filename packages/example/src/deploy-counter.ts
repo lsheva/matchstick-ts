@@ -1,12 +1,40 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { deployContract } from "viem/actions";
-import { getContract, type Abi, type Address, type Hex } from "viem";
+import {
+  getContract,
+  type Abi,
+  type Address,
+  type GetContractReturnType,
+  type Hex,
+  type PublicClient,
+  type WalletClient,
+} from "viem";
 import type { NetworkConnection } from "hardhat/types/network";
 
 const ARTIFACT_PATH = join("artifacts", "contracts", "Counter.sol", "Counter.json");
 
-export type CounterContract = ReturnType<typeof getContract>;
+/** Matches `abis/Counter.json` — `as const` so viem types `write.setValue`. */
+const counterAbi = [
+  {
+    anonymous: false,
+    inputs: [{ indexed: false, internalType: "uint256", name: "newValue", type: "uint256" }],
+    name: "ValueSet",
+    type: "event",
+  },
+  {
+    inputs: [{ internalType: "uint256", name: "newValue", type: "uint256" }],
+    name: "setValue",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+] as const;
+
+export type CounterContract = GetContractReturnType<
+  typeof counterAbi,
+  { public: PublicClient; wallet: WalletClient }
+>;
 
 /**
  * Deploy `Counter` via viem using the Hardhat artifact produced by `hardhat compile`.
@@ -32,7 +60,7 @@ export async function deployCounter(conn: NetworkConnection): Promise<{
     typeof artifact.bytecode === "string" ? artifact.bytecode : artifact.bytecode.object;
 
   const hash = await deployContract(wallet, {
-    abi: artifact.abi,
+    abi: counterAbi,
     bytecode,
     args: [],
   });
@@ -44,9 +72,9 @@ export async function deployCounter(conn: NetworkConnection): Promise<{
 
   const counter = getContract({
     address,
-    abi: artifact.abi,
+    abi: counterAbi,
     client: { public: publicClient, wallet },
   });
 
-  return { counter, abi: artifact.abi, address };
+  return { counter, abi: counterAbi as Abi, address };
 }

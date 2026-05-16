@@ -11,7 +11,6 @@ import { once } from "node:events";
 import type { CapturedEvent, RevertMock } from "./event-capture.ts";
 import { generateRunner } from "./codegen/generate-runner.ts";
 import { generateEntities } from "./codegen/generate-entities.ts";
-
 /**
  * Default location for the JSON IO files (`events.json`, `reads.json`,
  * `mocks.json`) shared between the TS orchestrator and the AS runner.
@@ -67,6 +66,13 @@ export type DefaultEntityMap = Record<string, EntityFields>;
 export interface Entities {}
 
 /**
+ * Augmentable registry of subgraph manifest `dataSources[].name` values.
+ * Emitted into `entities.d.ts` when codegen receives `subgraphYamlPath`.
+ */
+// biome-ignore lint/suspicious/noEmptyInterface: intentional augmentation target
+export interface DataSources {}
+
+/**
  * Resolves to the augmented `Entities` interface if the consumer has
  * generated one, otherwise the loose `DefaultEntityMap`. This is the
  * default generic for `runMatchstickTest` / `Snapshot` — no type
@@ -74,9 +80,17 @@ export interface Entities {}
  */
 export type AugmentedEntities = keyof Entities extends never ? DefaultEntityMap : Entities;
 
+/**
+ * Resolves to augmented `dataSources[].name` keys when `entities.d.ts`
+ * includes `DataSources`; otherwise falls back to entity keys.
+ */
+export type AugmentedDataSources = keyof DataSources extends never
+  ? EntityKey<AugmentedEntities>
+  : Extract<keyof DataSources, string>;
+
 // Generics are unconstrained so a closed-shape `interface Entities`
 // (which lacks an index signature) can still be passed in.
-type EntityKey<T> = Extract<keyof T, string>;
+export type EntityKey<T> = Extract<keyof T, string>;
 type FieldKey<T, K extends EntityKey<T>> = Extract<keyof T[K], string>;
 
 export interface RunOptions<TEntities = AugmentedEntities> {
@@ -136,6 +150,29 @@ export interface RunOptions<TEntities = AugmentedEntities> {
    * true. Set `KEEP_TEMP=1` in the environment to override.
    */
   cleanup?: boolean;
+  /**
+   * Print full `graph test` stdout (and stderr) after each run.
+   * Also enabled when `MATCHSTICK_VERBOSE=1` (or `true`) is set in the environment.
+   */
+  verbose?: boolean;
+}
+
+function matchstickVerbose(options: { verbose?: boolean }): boolean {
+  if (options.verbose === true) return true;
+  const env = process.env.MATCHSTICK_VERBOSE;
+  return env === "1" || env === "true";
+}
+
+function printMatchstickOutput(stdout: string, stderr: string): void {
+  process.stdout.write("\n--- matchstick ---\n");
+  if (stdout.length > 0) {
+    process.stdout.write(stdout.endsWith("\n") ? stdout : `${stdout}\n`);
+  }
+  if (stderr.length > 0) {
+    process.stdout.write("--- matchstick stderr ---\n");
+    process.stderr.write(stderr.endsWith("\n") ? stderr : `${stderr}\n`);
+  }
+  process.stdout.write("--- end matchstick ---\n\n");
 }
 
 /**
@@ -153,6 +190,44 @@ export function readsFor<
   K extends EntityKey<TEntities> = EntityKey<TEntities>,
 >(entityType: K, ids: readonly string[]): EntityRef<TEntities>[] {
   return ids.map((id) => ({ entityType, id }));
+}
+
+/** Single {@link EntityRef} — use in `index([read("Counter", "0")])`. */
+export function read<TEntities = AugmentedEntities, K extends EntityKey<TEntities> = EntityKey<TEntities>>(
+  entityType: K,
+  id: string,
+): EntityRef<TEntities> {
+  return { entityType, id };
+}
+
+/** Entity shape for one ref: found row or `null` if requested but missing. */
+export type EntityForRef<
+  TEntities,
+  R extends EntityRef<TEntities>,
+> = R extends { entityType: infer K }
+  ? K extends EntityKey<TEntities>
+    ? TEntities[K] | null
+    : never
+  : never;
+
+/** Tuple/array of entities aligned 1:1 with the refs passed to `index()`. */
+export type IndexResults<
+  TEntities,
+  R extends readonly EntityRef<TEntities>[],
+> = {
+  readonly [I in keyof R]: EntityForRef<TEntities, R[I]>;
+};
+
+/** Map a {@link Snapshot} to index results in the same order as `reads`. */
+export function indexResultsFromSnapshot<
+  TEntities,
+  const R extends readonly EntityRef<TEntities>[],
+>(snapshot: Snapshot<TEntities>, reads: R): IndexResults<TEntities, R> {
+  const results = reads.map((ref) => {
+    const entity = snapshot.entity(ref.entityType, ref.id);
+    return entity === undefined ? null : entity;
+  });
+  return results as IndexResults<TEntities, R>;
 }
 
 /**
@@ -254,7 +329,7 @@ export async function runMatchstickTest<TEntities = AugmentedEntities>(
     // hot path: subgraph.yaml / schema.graphql parses + a couple of stats.
     await Promise.all([
       generateRunner({ subgraphYamlPath: subgraphYaml, outputPath: runnerPath, tempDir: jsonDir }),
-      generateEntities({ schemaPath, outputPath: typesPath }),
+      generateEntities({ schemaPath, outputPath: typesPath, subgraphYamlPath: subgraphYaml }),
     ]);
   }
 
@@ -284,10 +359,15 @@ export async function runMatchstickTest<TEntities = AugmentedEntities>(
   }
 
   const [exitCode] = await once(proc, "exit");
+  const verbose = matchstickVerbose(options);
 
   if (exitCode !== 0) {
-    console.log("Matchstick output:", output);
-    throw new Error(`Matchstick failed with exit code ${exitCode}:\n${stderr}`);
+    printMatchstickOutput(output, stderr);
+    throw new Error(`Matchstick failed with exit code ${exitCode}`);
+  }
+
+  if (verbose) {
+    printMatchstickOutput(output, stderr);
   }
 
   const match = output.match(/SNAPSHOT:\s*(.+)/);
@@ -297,7 +377,7 @@ export async function runMatchstickTest<TEntities = AugmentedEntities>(
 
   let raw: RawSnapshot;
   try {
-    raw = JSON.parse(match[1]);
+    raw = JSON.parse(match[1]) as RawSnapshot;
   } catch (err) {
     throw new Error(`Failed to parse snapshot JSON: ${match[1]}\nError: ${err}`);
   }

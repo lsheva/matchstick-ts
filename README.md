@@ -44,26 +44,24 @@ export default defineConfig({
 ### Integration test
 
 ```ts
-import { describe, it, before, after } from "node:test";
+import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
-import { runMatchstickTest, EventCapture, viewFunctionRevertMocks } from "matchstick-ts";
+import { MatchstickHarness, readsFor } from "matchstick-ts";
 import { getOrCreateNode } from "hardhat-matchstick-ts/node";
 import { matchstickRunOptionsFromConfig } from "hardhat-matchstick-ts";
 
 describe("my flow", async () => {
   const node = await getOrCreateNode();
-  const capture = new EventCapture(await node.conn.viem.getPublicClient());
+  const harness = new MatchstickHarness(await node.conn.viem.getPublicClient(), {
+    runDefaults: matchstickRunOptionsFromConfig(node.hre.config.matchstick),
+  });
 
   it("indexes events", async () => {
     // deploy, transact, then:
-    await capture.captureFromReceipt(txHash, abi);
+    await harness.captureFromReceipt(txHash, abi);
+    harness.mockViewsAsReverting(abi, address);
 
-    const snap = await runMatchstickTest({
-      events: capture.serialize(),
-      reads: [{ entityType: "MyEntity", id: "0" }],
-      revertMocks: viewFunctionRevertMocks(abi, address),
-    });
-
+    const snap = await harness.run(readsFor("MyEntity", ["0"]));
     assert.equal(snap.get("MyEntity", "0", "field"), "expected");
   });
 
@@ -71,7 +69,23 @@ describe("my flow", async () => {
 });
 ```
 
+Lower-level pieces (`EventCapture`, `runMatchstickTest`) remain available when you need finer control.
+
+### Hardhat `conn.matchstick`
+
+```ts
+const conn = await network.getOrCreate();
+conn.matchstick.bind("Counter", address, abi);
+await conn.matchstick.anchor(); // skip history before deploy
+await counter.write.setValue([42n]);
+const [entity] = await conn.matchstick.index([read("Counter", "0")]);
+```
+
+**Important:** each `index()` call ingests new chain logs incrementally, then replays **every** buffered event from the beginning through Matchstick (fresh WASM store). Only `getLogs` is incremental; the subgraph store is not retained between calls. Use `anchor()` after deploy and `reset()` between fixtures.
+
 `runMatchstickTest` auto-codegen (default): writes `tests/runner.test.ts` and `tests/.tmp/entities.d.ts` before each run (idempotent).
+
+**Verbose Matchstick output:** set `matchstick: { verbose: true }` in `hardhat.config.ts`, pass `verbose: true` to `runMatchstickTest`, or run tests with `MATCHSTICK_VERBOSE=1` to print full `graph test` stdout (handler `log.*` lines included).
 
 Reference subgraph + tests: [`packages/example`](packages/example/).
 

@@ -8,7 +8,7 @@ import { generateRunner, generateEntities } from "../codegen/index.ts";
 
 const USAGE = `Usage:
   matchstick-ts generate-runner   <subgraph.yaml>  <output.test.ts>  [--assembly <import-specifier>] [--temp-dir <path>]
-  matchstick-ts generate-entities <schema.graphql> <output.d.ts>     [--module-specifier <name>]
+  matchstick-ts generate-entities <schema.graphql> <output.d.ts>     [--subgraph <subgraph.yaml>] [--module-specifier <name>]
 
 Note: When using \`runMatchstickTest\` with \`autoCodegen: true\` (the default),
 neither subcommand is required — codegen runs in-process on each test call.
@@ -18,6 +18,7 @@ Options:
   --assembly           AS import specifier for the runner template (default: matchstick-ts/assembly)
   --temp-dir           Directory the runner reads JSON IO from (default: tests/.tmp)
                        Must match RunOptions.jsonDir on the TS side.
+  --subgraph           Subgraph manifest — augments DataSources from dataSources[].name.
   --module-specifier   Module name to augment (default: matchstick-ts).
                        Set this if you've installed the package under a different name.
 `;
@@ -51,9 +52,10 @@ async function main() {
     }
     case "generate-entities": {
       const moduleSpecifier = flag(argv, "--module-specifier");
+      const subgraphYamlPath = flag(argv, "--subgraph");
       const [schemaPath, outputPath] = argv;
       if (!schemaPath || !outputPath) die(USAGE);
-      await generateEntities({ schemaPath, outputPath, moduleSpecifier });
+      await generateEntities({ schemaPath, outputPath, moduleSpecifier, subgraphYamlPath });
       return;
     }
     case "--help":

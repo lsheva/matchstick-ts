@@ -1,4 +1,5 @@
 import "hardhat/config";
+import "hardhat/types/config";
 
 /**
  * Optional defaults for {@link runMatchstickTest} from `matchstick-ts`.
@@ -15,14 +16,21 @@ export interface MatchstickUserConfig {
   typesPath?: string;
   /** JSON IO dir shared with the AS runner. Defaults to `tests/.tmp`. */
   jsonDir?: string;
+  /** First `ingest` / `index` when never synced and not anchored. Defaults to `0`. */
+  startBlock?: bigint;
+  /** Print full Matchstick / `graph test` output after each replay. */
+  verbose?: boolean;
 }
 
 declare module "hardhat/config" {
   interface HardhatUserConfig {
     matchstick?: MatchstickUserConfig;
   }
+}
 
+declare module "hardhat/types/config" {
   interface HardhatConfig {
     matchstick?: MatchstickUserConfig;
   }
 }
+

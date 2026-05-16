@@ -10,10 +10,15 @@
 import type { HardhatPlugin } from "hardhat/types/plugins";
 
 import "./type-extensions.ts";
+import "./network-type-extensions.ts";
 
 const hardhatMatchstickPlugin: HardhatPlugin = {
   id: "hardhat-matchstick-ts",
   npmPackage: "hardhat-matchstick-ts",
+  dependencies: () => [import("@nomicfoundation/hardhat-viem")],
+  hookHandlers: {
+    network: () => import("./internal/hook-handlers/network.ts"),
+  },
 };
 
 export default hardhatMatchstickPlugin;
@@ -31,3 +36,5 @@ export type { MatchstickUserConfig } from "./type-extensions.ts";
  *   });
  */
 export { matchstickRunOptionsFromConfig } from "./config.ts";
+export { MatchstickIndexer } from "./indexer.ts";
+export type { MatchstickIndexerOptions } from "./indexer.ts";

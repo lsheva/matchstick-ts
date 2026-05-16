@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { Snapshot, readsFor } from "../src/snapshot.ts";
+import { indexResultsFromSnapshot, read, Snapshot, readsFor } from "../src/snapshot.ts";
 
 describe("Snapshot", () => {
   const snap = new Snapshot({
@@ -31,6 +31,13 @@ describe("Snapshot", () => {
     assert.equal(snap.requested("Counter", "2"), false);
     assert.equal(snap.has("Counter", "0"), true);
     assert.equal(snap.has("Counter", "1"), false);
+  });
+
+  it("indexResultsFromSnapshot returns rows aligned with refs", () => {
+    const reads = [read("Counter", "0"), read("Counter", "1")] as const;
+    const [found, missing] = indexResultsFromSnapshot(snap, reads);
+    assert.deepEqual(found, { id: "0", value: "42" });
+    assert.equal(missing, null);
   });
 });
 

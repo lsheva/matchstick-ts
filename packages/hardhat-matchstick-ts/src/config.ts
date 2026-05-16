@@ -4,7 +4,10 @@ import type { MatchstickUserConfig } from "./type-extensions.ts";
 /** Pick path defaults from `hardhat.config` → `runMatchstickTest` options. */
 export function matchstickRunOptionsFromConfig(
   config: MatchstickUserConfig | undefined,
-): Pick<RunOptions, "subgraphYaml" | "schemaPath" | "runnerPath" | "typesPath" | "jsonDir"> {
+): Pick<
+  RunOptions,
+  "subgraphYaml" | "schemaPath" | "runnerPath" | "typesPath" | "jsonDir" | "verbose"
+> {
   if (config === undefined) {
     return {};
   }
@@ -14,5 +17,6 @@ export function matchstickRunOptionsFromConfig(
     runnerPath: config.runnerPath,
     typesPath: config.typesPath,
     jsonDir: config.jsonDir,
+    verbose: config.verbose,
   };
 }

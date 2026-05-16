@@ -21,7 +21,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./node": "./src/node-entry.ts",
-    "./config": "./src/type-extensions.ts"
+    "./config": "./src/type-extensions.ts",
+    "./network": "./src/network-type-extensions.ts"
   },
   "files": [
     "src"
@@ -43,6 +44,7 @@
     "@types/node": "^22.0.0",
     "hardhat": "^3.4.0",
     "matchstick-ts": "workspace:*",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "viem": "^2.37.9"
   }
 }

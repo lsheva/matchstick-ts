@@ -13,12 +13,16 @@ describe("generateEntities", () => {
       await generateEntities({
         schemaPath: "tests/fixtures/minimal-schema.graphql",
         outputPath,
+        subgraphYamlPath: "tests/fixtures/subgraph.yaml",
       });
       const text = await readFile(outputPath, "utf8");
+      assert.match(text, /import type \{\} from "matchstick-ts"/);
       assert.match(text, /declare module "matchstick-ts"/);
       assert.match(text, /interface Counter \{/);
       assert.match(text, /value: string;/);
       assert.match(text, /interface Entities \{/);
+      assert.match(text, /Counter: Counter;/);
+      assert.match(text, /interface DataSources \{/);
       assert.match(text, /Counter: Counter;/);
     } finally {
       await rm(dir, { recursive: true, force: true });
