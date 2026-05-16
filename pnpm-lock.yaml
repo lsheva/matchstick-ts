@@ -78,6 +78,9 @@ importers:
 
   packages/matchstick-ts:
     dependencies:
+      '@graphprotocol/graph-cli':
+        specifier: '>=0.90'
+        version: 0.98.1(@types/node@22.19.19)(typescript@5.9.3)(zod@3.25.76)
       graphql:
         specifier: ^16.11.0
         version: 16.14.0
