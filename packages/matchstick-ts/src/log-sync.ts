@@ -152,7 +152,10 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
     this.runDefaults = (options.runDefaults ?? {}) as RunDefaults<TEntities>;
   }
 
-  /** Last block fully ingested via {@link ingest} (`undefined` if never ingested). */
+  /**
+   * Last block fully ingested via {@link ingest} (`undefined` if never ingested).
+   * This is only the `eth_getLogs` cursor — not subgraph sync state.
+   */
   get lastSyncedBlock(): bigint | undefined {
     return this.syncedBlock;
   }

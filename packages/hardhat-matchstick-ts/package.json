@@ -4,6 +4,7 @@
   "description": "Hardhat 3 plugin for matchstick-ts subgraph snapshot tests.",
   "license": "MIT",
   "type": "module",
+  "types": "./src/index.ts",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/lsheva/matchstick-ts.git",
@@ -18,16 +19,38 @@
     "subgraph",
     "matchstick"
   ],
+  "engines": {
+    "node": ">=22.6"
+  },
   "exports": {
-    ".": "./src/index.ts",
-    "./node": "./src/node-entry.ts",
-    "./config": "./src/type-extensions.ts",
-    "./network": "./src/network-type-extensions.ts"
+    ".": {
+      "types": "./src/index.ts",
+      "typescript": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./src/node-entry.ts",
+      "typescript": "./src/node-entry.ts",
+      "default": "./dist/node-entry.js"
+    },
+    "./config": {
+      "types": "./src/type-extensions.ts",
+      "typescript": "./src/type-extensions.ts",
+      "default": "./dist/type-extensions.js"
+    },
+    "./network": {
+      "types": "./src/network-type-extensions.ts",
+      "typescript": "./src/network-type-extensions.ts",
+      "default": "./dist/network-type-extensions.js"
+    }
   },
   "files": [
+    "dist",
     "src"
   ],
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "pnpm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

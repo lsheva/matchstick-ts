@@ -4,6 +4,7 @@
   "description": "Typed snapshot testing for The Graph subgraphs via Matchstick — assertions in TypeScript.",
   "license": "MIT",
   "type": "module",
+  "types": "./src/index.ts",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/lsheva/matchstick-ts.git",
@@ -18,19 +19,33 @@
     "assemblyscript",
     "testing"
   ],
+  "engines": {
+    "node": ">=22.6"
+  },
   "exports": {
-    ".": "./src/index.ts",
-    "./codegen": "./src/codegen/index.ts",
+    ".": {
+      "types": "./src/index.ts",
+      "typescript": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./codegen": {
+      "types": "./src/codegen/index.ts",
+      "typescript": "./src/codegen/index.ts",
+      "default": "./dist/codegen/index.js"
+    },
     "./assembly": "./assembly/index.ts"
   },
   "bin": {
-    "matchstick-ts": "./src/bin/cli.ts"
+    "matchstick-ts": "./dist/bin/cli.js"
   },
   "files": [
+    "dist",
     "src",
     "assembly"
   ],
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "pnpm run build",
     "test": "node --test tests/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
@@ -39,9 +54,15 @@
     "yaml": "^2.5.0"
   },
   "peerDependencies": {
+    "@graphprotocol/graph-cli": ">=0.90",
     "@graphprotocol/graph-ts": ">=0.37",
     "matchstick-as": ">=0.6",
     "viem": "^2"
+  },
+  "peerDependenciesMeta": {
+    "viem": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@graphprotocol/graph-ts": "0.37.0",

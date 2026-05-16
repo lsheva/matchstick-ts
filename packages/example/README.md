@@ -19,12 +19,16 @@ tests/                        # Matchstick-generated (gitignored)
   .tmp/entities.d.ts
 ```
 
+## Requirements
+
+Same as the root README: Node 22+, `@graphprotocol/graph-cli`, `matchstick-as`, and `hardhat-matchstick-ts` for the e2e tests.
+
 ## Run
 
 From the monorepo root:
 
 ```bash
-pnpm test                 # matchstick-ts unit tests + all tests here
+pnpm test                 # build + matchstick-ts unit tests + all tests here
 pnpm test:unit            # library unit tests only
 pnpm test:integration     # this package only (pretest + all tests)
 pnpm --filter matchstick-ts-example test:fast   # synthetic only (graph codegen, no compile)

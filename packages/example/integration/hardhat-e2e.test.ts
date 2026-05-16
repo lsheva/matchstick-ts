@@ -2,7 +2,7 @@
  * Full-stack integration: deploy → bind → index.
  * Each index() replays the full event buffer from the start (see package README).
  */
-import { describe, it } from "node:test";
+import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
 import { network } from "hardhat";
 import { read } from "matchstick-ts";
@@ -11,6 +11,8 @@ import { deployCounter } from "../src/deploy-counter.ts";
 const conn = await network.getOrCreate();
 
 describe("Hardhat → Matchstick → Counter", () => {
+  after(() => conn.matchstick.reset());
+
   it("indexes setValue from chain logs", async () => {
     const { counter, abi, address } = await deployCounter(conn);
     const walletClients = await conn.viem.getWalletClients();

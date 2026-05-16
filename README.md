@@ -9,13 +9,38 @@ Replay captured EVM events through your mapping handlers, dump store entities as
 | Package | npm | Role |
 | --- | --- | --- |
 | [`packages/matchstick-ts`](packages/matchstick-ts/) | `matchstick-ts` | `runMatchstickTest`, `Snapshot`, `EventCapture`, codegen, AS helpers |
-| [`packages/hardhat-matchstick-ts`](packages/hardhat-matchstick-ts/) | `hardhat-matchstick-ts` | Hardhat 3 plugin + in-process node |
+| [`packages/hardhat-matchstick-ts`](packages/hardhat-matchstick-ts/) | `hardhat-matchstick-ts` | Hardhat 3 plugin + `conn.matchstick` |
 | [`packages/example`](packages/example/) | — | Reference subgraph + **integration tests** (CI) |
+
+## Package layout (TypeScript-first)
+
+Published tarballs include **`src/`** and **`dist/`**:
+
+| Export condition | Resolves to | Used by |
+| --- | --- | --- |
+| `types` | `./src/*.ts` | TypeScript, editors (jump-to-def on source) |
+| `typescript` | `./src/*.ts` | Node 22.6+ with type stripping (opt-in) |
+| `default` | `./dist/*.js` | Normal Node / production / Hardhat plugin |
+
+Opt into runtime source with:
+
+```bash
+node --conditions=typescript --experimental-strip-types your-test.mjs
+```
+
+Or set `NODE_OPTIONS='--conditions=typescript --experimental-strip-types'`. Without that, Node loads compiled **`dist/`** (no experimental flags required). The CLI always uses `dist/bin/cli.js`.
+
+## Requirements
+
+- **Node.js** 22.6+ (22+ works; 22.6+ for optional `--experimental-strip-types` on source)
+- **`@graphprotocol/graph-cli`** — provides `graph test` / Matchstick (`pnpm add -D @graphprotocol/graph-cli`)
+- **`matchstick-as`** — in your subgraph project (`pnpm add -D matchstick-as`)
+- **`viem`** — optional peer; required for chain log capture / Hardhat tests
 
 ## Install
 
 ```bash
-pnpm add -D matchstick-ts
+pnpm add -D matchstick-ts @graphprotocol/graph-cli matchstick-as
 pnpm add -D hardhat-matchstick-ts   # Hardhat integration tests only
 ```
 
@@ -25,7 +50,7 @@ From GitHub:
 pnpm add -D "github:lsheva/matchstick-ts"
 ```
 
-## Quick start
+## Quick start (Hardhat 3)
 
 ### `hardhat.config.ts`
 
@@ -33,10 +58,11 @@ pnpm add -D "github:lsheva/matchstick-ts"
 import hardhatMatchstick from "hardhat-matchstick-ts";
 
 export default defineConfig({
-  plugins: [/* viem, network-helpers, … */, hardhatMatchstick],
+  plugins: [/* viem, network-helpers, node-test-runner, … */, hardhatMatchstick],
   matchstick: {
     subgraphYaml: "subgraph.yaml",
     schemaPath: "schema.graphql",
+    verbose: false, // set true to print full graph test output
   },
 });
 ```
@@ -46,72 +72,117 @@ export default defineConfig({
 ```ts
 import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
-import { MatchstickHarness, readsFor } from "matchstick-ts";
-import { getOrCreateNode } from "hardhat-matchstick-ts/node";
-import { matchstickRunOptionsFromConfig } from "hardhat-matchstick-ts";
+import { network } from "hardhat";
+import { read } from "matchstick-ts";
+import { deployMyContract } from "./deploy.js";
 
-describe("my flow", async () => {
-  const node = await getOrCreateNode();
-  const harness = new MatchstickHarness(await node.conn.viem.getPublicClient(), {
-    runDefaults: matchstickRunOptionsFromConfig(node.hre.config.matchstick),
+const conn = await network.getOrCreate();
+
+describe("subgraph integration", () => {
+  after(() => conn.matchstick.reset());
+
+  it("indexes a contract event", async () => {
+    const { address, abi, contract } = await deployMyContract(conn);
+    const wallet = (await conn.viem.getWalletClients())[0];
+
+    conn.matchstick.bind("MyDataSource", address, abi);
+    await conn.matchstick.anchor();
+
+    await contract.write.myEvent([/* args */], {
+      account: wallet.account,
+      chain: wallet.chain,
+    });
+
+    const [entity] = await conn.matchstick.index([read("MyEntity", "0")]);
+
+    assert.ok(entity);
+    assert.equal(entity.someField, "expected");
   });
-
-  it("indexes events", async () => {
-    // deploy, transact, then:
-    await harness.captureFromReceipt(txHash, abi);
-    harness.mockViewsAsReverting(abi, address);
-
-    const snap = await harness.run(readsFor("MyEntity", ["0"]));
-    assert.equal(snap.get("MyEntity", "0", "field"), "expected");
-  });
-
-  after(() => node.close());
 });
 ```
 
-Lower-level pieces (`EventCapture`, `runMatchstickTest`) remain available when you need finer control.
+### TypeScript setup
 
-### Hardhat `conn.matchstick`
+Include generated types in your test `tsconfig`:
 
-```ts
-const conn = await network.getOrCreate();
-conn.matchstick.bind("Counter", address, abi);
-await conn.matchstick.anchor(); // skip history before deploy
-await counter.write.setValue([42n]);
-const [entity] = await conn.matchstick.index([read("Counter", "0")]);
+```json
+{
+  "include": [
+    "integration/**/*.ts",
+    "tests/.tmp/entities.d.ts"
+  ]
+}
 ```
 
-**Important:** each `index()` call ingests new chain logs incrementally, then replays **every** buffered event from the beginning through Matchstick (fresh WASM store). Only `getLogs` is incremental; the subgraph store is not retained between calls. Use `anchor()` after deploy and `reset()` between fixtures.
+Gitignore generated scratch files:
 
-`runMatchstickTest` auto-codegen (default): writes `tests/runner.test.ts` and `tests/.tmp/entities.d.ts` before each run (idempotent).
+```
+tests/runner.test.ts
+tests/.tmp/
+```
 
-**Verbose Matchstick output:** set `matchstick: { verbose: true }` in `hardhat.config.ts`, pass `verbose: true` to `runMatchstickTest`, or run tests with `MATCHSTICK_VERBOSE=1` to print full `graph test` stdout (handler `log.*` lines included).
+First `index()` or `runMatchstickTest()` run creates `tests/runner.test.ts` and `entities.d.ts` (idempotent).
 
-Reference subgraph + tests: [`packages/example`](packages/example/).
+## `conn.matchstick` API
 
-If you have multiple Node integration files, run them with `--test-concurrency=1`. Node’s test runner executes files in parallel by default; concurrent `graph test` / Matchstick runs corrupt each other.
+| Method | Role |
+| --- | --- |
+| `bind(dataSource, address, abi)` | Map manifest data source → contract (typed via generated `DataSources`) |
+| `anchor()` | Set log cursor to chain head, clear event buffer |
+| `ingest()` | Append new `eth_getLogs` only |
+| `index(reads)` | Ingest + replay **all** buffered events + return entity rows |
+| `reset()` | Clear bindings, events, cursor |
 
-## Testing this repo
+**Important:** each `index()` replays the **entire** event buffer from the first event (Matchstick has no incremental store). Only `getLogs` is incremental. Use `anchor()` after deploy and `reset()` between tests.
 
-```bash
-pnpm test              # unit tests + example integration
-pnpm test:unit           # matchstick-ts only (fast)
-pnpm test:integration    # packages/example (Matchstick + optional Hardhat)
+`lastSyncedBlock` is the **log ingest cursor** (last block fetched via `ingest`), not subgraph sync state.
+
+## Synthetic events (no chain)
+
+```ts
+import { runMatchstickTest, readsFor } from "matchstick-ts";
+
+const snap = await runMatchstickTest({
+  events: [{ event: "MyEvent", address: "0x…", blockNumber: 1, transactionHash: "0x…", params: {} }],
+  reads: readsFor("MyEntity", ["0"]),
+});
+assert.equal(snap.get("MyEntity", "0", "field"), "99");
+```
+
+## Verbose Matchstick output
+
+- `matchstick: { verbose: true }` in Hardhat config
+- `verbose: true` on `runMatchstickTest` / `index({ run: { verbose: true } })`
+- `MATCHSTICK_VERBOSE=1` in the environment
+
+Prints full `graph test` stdout (handler `log.*` lines included).
+
+## Alternative: `MatchstickHarness`
+
+For receipt-based capture without `conn.matchstick`:
+
+```ts
+import { MatchstickHarness, readsFor } from "matchstick-ts";
+
+const harness = new MatchstickHarness(publicClient, { runDefaults: { subgraphYaml: "subgraph.yaml" } });
+await harness.captureFromReceipt(txHash, abi);
+const snap = await harness.run(readsFor("MyEntity", ["0"]));
 ```
 
 ## CLI
 
 ```bash
 matchstick-ts generate-runner   <subgraph.yaml>  <tests/runner.test.ts>  [--temp-dir tests/.tmp]
-matchstick-ts generate-entities <schema.graphql> <tests/.tmp/entities.d.ts>
+matchstick-ts generate-entities <schema.graphql> <tests/.tmp/entities.d.ts>  [--subgraph <subgraph.yaml>]
 ```
 
-Optional when `autoCodegen: true` (default).
+Optional when `autoCodegen: true` (default on `runMatchstickTest`).
 
-## Develop
+## Testing this repo
 
 ```bash
 pnpm install
+pnpm build
 pnpm test
 pnpm typecheck
 ```

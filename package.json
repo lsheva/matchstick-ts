@@ -8,10 +8,11 @@
     "url": "git+https://github.com/lsheva/matchstick-ts.git"
   },
   "scripts": {
-    "test": "pnpm test:unit && pnpm test:integration",
+    "build": "pnpm -r --filter \"./packages/matchstick-ts\" --filter \"./packages/hardhat-matchstick-ts\" build",
+    "test": "pnpm build && pnpm test:unit && pnpm test:integration",
     "test:unit": "pnpm --filter matchstick-ts test",
     "test:integration": "pnpm --filter matchstick-ts-example test",
-    "test:fast": "pnpm test:unit && pnpm --filter matchstick-ts-example test:fast",
+    "test:fast": "pnpm build && pnpm test:unit && pnpm --filter matchstick-ts-example test:fast",
     "typecheck": "pnpm -r typecheck"
   }
 }
