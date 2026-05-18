@@ -16,3 +16,18 @@ export function valueSetCaptured(newValue: bigint, blockNumber = 1): CapturedEve
     params: [["newValue", newValue.toString()]],
   };
 }
+
+/**
+ * Build a serialized `SignedValueSet` event (int256 parameter).
+ * Negative values serialize as e.g. "-99" which exercises the signed-integer
+ * branch of `jsonValueToEthereumValue` in the matchstick-ts assembly runtime.
+ */
+export function signedValueSetCaptured(newValue: bigint, blockNumber = 1): CapturedEvent {
+  return {
+    event: "SignedValueSet",
+    address: COUNTER_ADDRESS,
+    blockNumber,
+    transactionHash: TX_HASH,
+    params: [["newValue", newValue.toString()]],
+  };
+}

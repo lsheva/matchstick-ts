@@ -2,3 +2,8 @@ type Counter @entity(immutable: false) {
   id: ID!
   value: BigInt!
 }
+
+type SignedCounter @entity(immutable: false) {
+  id: ID!
+  value: BigInt!
+}

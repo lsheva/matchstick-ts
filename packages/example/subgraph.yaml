@@ -20,4 +20,6 @@ dataSources:
       eventHandlers:
         - event: ValueSet(uint256)
           handler: handleValueSet
+        - event: SignedValueSet(int256)
+          handler: handleSignedValueSet
       file: ./src/mapping.ts

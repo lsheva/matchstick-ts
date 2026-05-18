@@ -13,6 +13,19 @@
     "type": "event"
   },
   {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "int256",
+        "name": "newValue",
+        "type": "int256"
+      }
+    ],
+    "name": "SignedValueSet",
+    "type": "event"
+  },
+  {
     "inputs": [
       {
         "internalType": "uint256",

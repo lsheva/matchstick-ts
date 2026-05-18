@@ -75,6 +75,10 @@ function jsonValueToEthereumValue(value: JSONValue): ethereum.Value {
     if (isDigitsOnly(str)) {
       return ethereum.Value.fromUnsignedBigInt(BigInt.fromString(str));
     }
+    // Negative signed integer — int256 pnl fields serialize as e.g. "-12345"
+    if (str.length > 1 && str.charCodeAt(0) == 45 /* '-' */ && isDigitsOnly(str.slice(1))) {
+      return ethereum.Value.fromSignedBigInt(BigInt.fromString(str));
+    }
     if (str.startsWith("0x")) {
       return ethereum.Value.fromBytes(Bytes.fromHexString(str) as Bytes);
     }
