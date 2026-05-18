@@ -40,4 +40,15 @@ describe("synthetic ValueSet → Counter entity", () => {
     assert.equal(snap.entity("Counter", "never-asked"), undefined);
     assert.equal(snap.requested("Counter", "never-asked"), false);
   });
+
+  it("returns saved entities without knowing their IDs upfront", async () => {
+    const snap = await runMatchstickTest({
+      events: [valueSetCaptured(42n)],
+      reads: [], // caller does not need to know the ID in advance
+    });
+
+    const [counter] = snap.saved("Counter");
+    assert.ok(counter);
+    assert.equal(counter.value, "42");
+  });
 });

@@ -5,7 +5,7 @@
  * `node:assert/strict` (or any matcher library) on the result.
  */
 import { spawn } from "node:child_process";
-import { writeFile, rm, mkdir } from "node:fs/promises";
+import { readFile, writeFile, rm, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { once } from "node:events";
 import type { CapturedEvent, RevertMock } from "./event-capture.ts";
@@ -146,6 +146,16 @@ export interface RunOptions<TEntities = AugmentedEntities> {
    */
   autoCodegen?: boolean;
   /**
+   * Path to the `graph codegen`-generated `schema.ts` file. Before running
+   * `graph test`, matchstick-ts patches each entity's `save()` method to also
+   * call `trackSave(entityType, id)`, enabling {@link Snapshot.discoveredIds}.
+   * The original file is restored in a `finally` block regardless of outcome.
+   *
+   * Defaults to `"generated/schema.ts"`. Set to `null` / `undefined` explicitly
+   * (via `generatedSchemaPath: ""`) to disable patching.
+   */
+  generatedSchemaPath?: string;
+  /**
    * Whether to remove the JSON IO files after the run completes. Defaults to
    * true. Set `KEEP_TEMP=1` in the environment to override.
    */
@@ -155,6 +165,26 @@ export interface RunOptions<TEntities = AugmentedEntities> {
    * Also enabled when `MATCHSTICK_VERBOSE=1` (or `true`) is set in the environment.
    */
   verbose?: boolean;
+}
+
+/**
+ * Patch the `graph codegen`-generated `schema.ts` so that every entity's
+ * `save()` method calls `trackSave(entityType, id)` after `store.set(...)`.
+ * This is applied temporarily around each `graph test` run — the original is
+ * restored in a `finally` block.
+ *
+ * The regex matches the consistent pattern emitted by `graph codegen`:
+ *   store.set("EntityType", id<expr>, this)
+ * where `id<expr>` is `id.toString()`, `id.toI64().toString()`,
+ * `id.toBytes().toHexString()`, etc.
+ */
+function patchGeneratedSchema(content: string): string {
+  const importLine = 'import { trackSave } from "matchstick-ts/assembly";';
+  const patched = content.replace(
+    /store\.set\(("([^"]+)"),\s*([\w.!()]+),\s*this\)/g,
+    'store.set($1, $3, this);\n      trackSave($1, $3)',
+  );
+  return `${importLine}\n${patched}`;
 }
 
 function matchstickVerbose(options: { verbose?: boolean }): boolean {
@@ -249,8 +279,10 @@ export function indexResultsFromSnapshot<
  */
 export class Snapshot<TEntities = AugmentedEntities> {
   private raw: RawSnapshot;
-  constructor(raw: RawSnapshot) {
+  private manifest: Record<string, string[]>;
+  constructor(raw: RawSnapshot, manifest: Record<string, string[]> = {}) {
     this.raw = raw;
+    this.manifest = manifest;
   }
 
   /** Whole entity, or `null` if requested but not found, or
@@ -298,6 +330,31 @@ export class Snapshot<TEntities = AugmentedEntities> {
   has<K extends EntityKey<TEntities>>(entityType: K, id: string): boolean {
     return this.entity(entityType, id) != null;
   }
+
+  /**
+   * Entities that were saved during the run, discovered via the schema patch.
+   * The caller does not need to know IDs upfront — every entity whose
+   * `save()` was called is returned here, in save order, deduplicated.
+   *
+   * Only populated when the generated schema was patched (requires
+   * `generatedSchemaPath` to resolve, defaults to `"generated/schema.ts"`).
+   *
+   * Each returned entity is also present in the snapshot, so `entity()` and
+   * `get()` work on it by ID as well.
+   *
+   * @example
+   *   const [order] = snap.saved("Order");
+   *   assert.equal(order.amount, "100");
+   */
+  saved<K extends EntityKey<TEntities>>(entityType: K): NonNullable<TEntities[K]>[] {
+    const ids = (this.manifest[entityType as string] as string[] | undefined) ?? [];
+    const result: NonNullable<TEntities[K]>[] = [];
+    for (const id of ids) {
+      const e = this.entity(entityType, id);
+      if (e != null) result.push(e as NonNullable<TEntities[K]>);
+    }
+    return result;
+  }
 }
 
 /**
@@ -323,6 +380,9 @@ export async function runMatchstickTest<TEntities = AugmentedEntities>(
   const schemaPath = options.schemaPath ?? "schema.graphql";
   const runnerPath = options.runnerPath ?? "tests/runner.test.ts";
   const typesPath = options.typesPath ?? join(jsonDir, "entities.d.ts");
+  // Default to the conventional graph-codegen output location. Pass an empty
+  // string to disable patching entirely.
+  const generatedSchemaPath = options.generatedSchemaPath ?? "generated/schema.ts";
 
   if (options.autoCodegen !== false) {
     // Both generators write only if content changed, so this is cheap on the
@@ -341,24 +401,43 @@ export async function runMatchstickTest<TEntities = AugmentedEntities>(
     JSON.stringify(options.revertMocks ?? [], null, 2),
   );
 
+  // Patch generated/schema.ts so every save() also calls trackSave(type, id).
+  // The original is restored in the finally block regardless of outcome.
+  let originalGeneratedSchema: string | null = null;
+  if (generatedSchemaPath) {
+    originalGeneratedSchema = await readFile(generatedSchemaPath, "utf8").catch(() => null);
+    if (originalGeneratedSchema !== null) {
+      await writeFile(generatedSchemaPath, patchGeneratedSchema(originalGeneratedSchema));
+    }
+  }
+
   // `graph test` resolves test files relative to `tests/`, by basename.
   const runnerArg = runnerPath.replace(/^tests\//, "").replace(/\.test\.ts$/, "");
 
-  const proc = spawn("graph", ["test", runnerArg], {
-    env: { ...process.env, RUST_BACKTRACE: "1" },
-  });
-
   let output = "";
-  for await (const chunk of proc.stdout ?? []) {
-    output += chunk;
-  }
-
   let stderr = "";
-  for await (const chunk of proc.stderr ?? []) {
-    stderr += chunk;
+  let exitCode: number | null = null;
+
+  try {
+    const proc = spawn("graph", ["test", runnerArg], {
+      env: { ...process.env, RUST_BACKTRACE: "1" },
+    });
+
+    for await (const chunk of proc.stdout ?? []) {
+      output += chunk;
+    }
+
+    for await (const chunk of proc.stderr ?? []) {
+      stderr += chunk;
+    }
+
+    [exitCode] = await once(proc, "exit");
+  } finally {
+    if (originalGeneratedSchema !== null) {
+      await writeFile(generatedSchemaPath, originalGeneratedSchema);
+    }
   }
 
-  const [exitCode] = await once(proc, "exit");
   const verbose = matchstickVerbose(options);
 
   if (exitCode !== 0) {
@@ -382,15 +461,26 @@ export async function runMatchstickTest<TEntities = AugmentedEntities>(
     throw new Error(`Failed to parse snapshot JSON: ${match[1]}\nError: ${err}`);
   }
 
+  const manifestMatch = output.match(/MANIFEST:\s*(.+)/);
+  let manifest: Record<string, string[]> = {};
+  if (manifestMatch) {
+    try {
+      manifest = JSON.parse(manifestMatch[1]) as Record<string, string[]>;
+    } catch {
+      // Tolerate a malformed MANIFEST line — discoveredIds() returns [] for all types.
+    }
+  }
+
   if (process.env.DEBUG_SNAPSHOT) {
     console.log("Snapshot:", JSON.stringify(raw, null, 2));
+    console.log("Manifest:", JSON.stringify(manifest, null, 2));
   }
 
   if (options.cleanup !== false) {
     await cleanupJsonFiles(jsonDir);
   }
 
-  return new Snapshot<TEntities>(raw);
+  return new Snapshot<TEntities>(raw, manifest);
 }
 
 /**

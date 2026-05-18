@@ -20,6 +20,7 @@ import {
   type EntityRef,
   type IndexResults,
   type RunOptions,
+  type Snapshot,
 } from "./snapshot.ts";
 
 /** Minimal RPC surface for block head + log filters (viem `PublicClient` satisfies this). */
@@ -244,6 +245,31 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
     });
 
     return indexResultsFromSnapshot(snapshot, reads);
+  }
+
+  /**
+   * Like {@link index}, but returns the full {@link Snapshot} instead of
+   * aligned `IndexResults`. Use this when you need {@link Snapshot.discoveredIds}
+   * to find entity IDs that were not known upfront.
+   *
+   * @example
+   *   const snap = await conn.matchstick.indexSnapshot([]);
+   *   const ids = snap.discoveredIds("Order");   // IDs created during replay
+   *   snap.entity("Order", ids[0]);              // full entity data, no second run
+   */
+  async indexSnapshot<const R extends readonly EntityRef<TEntities>[]>(
+    reads: R,
+    options: IndexOptions<TEntities> = {},
+  ): Promise<Snapshot<TEntities>> {
+    const { run: runOverrides, ...ingestOptions } = options;
+    await this.ingest(ingestOptions);
+    return runMatchstickTest<TEntities>({
+      ...this.runDefaults,
+      ...runOverrides,
+      events: this.events,
+      reads: [...reads],
+      revertMocks: [...this.revertMocks.values()],
+    });
   }
 
   /**

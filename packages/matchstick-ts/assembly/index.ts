@@ -269,3 +269,46 @@ export function entityToJson(entity: Entity): string {
   }
   return builder.toString();
 }
+
+/* -------------------------------------------------------------------------- *
+ * Entity ID tracker.
+ *
+ * The generated schema's save() methods are patched at test time to call
+ * trackSave(entityType, id) alongside store.set(). The runner then reads the
+ * tracker via getAllTrackedTypes / getTrackedIdsForType to build the MANIFEST
+ * line and include discovered entities in the SNAPSHOT without the caller
+ * needing to know IDs upfront.
+ *
+ * The module-level Map is reset automatically on each fresh WASM instantiation
+ * (i.e. each graph test run), so no explicit reset is needed.
+ * -------------------------------------------------------------------------- */
+
+let _tracker = new Map<string, Array<string>>();
+// Parallel set for O(1) dedup: prevents an entity saved multiple times in one
+// handler from appearing more than once in the manifest.
+let _trackerSeen = new Map<string, Set<string>>();
+
+/** Called by the patched save() — records (entityType, id) in the tracker. */
+export function trackSave(entityType: string, id: string): void {
+  if (!_tracker.has(entityType)) {
+    _tracker.set(entityType, new Array<string>());
+    _trackerSeen.set(entityType, new Set<string>());
+  }
+  if (!_trackerSeen.get(entityType).has(id)) {
+    _tracker.get(entityType).push(id);
+    _trackerSeen.get(entityType).add(id);
+  }
+}
+
+/** Returns all entity types that had at least one save tracked. */
+export function getAllTrackedTypes(): Array<string> {
+  return _tracker.keys();
+}
+
+/** Returns all tracked IDs for the given entity type (empty array if none). */
+export function getTrackedIdsForType(entityType: string): Array<string> {
+  if (_tracker.has(entityType)) {
+    return _tracker.get(entityType);
+  }
+  return new Array<string>();
+}

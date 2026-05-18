@@ -56,4 +56,20 @@ describe("Hardhat → Matchstick → Counter", () => {
     assert.ok(blockAfterFirst !== undefined);
     assert.ok(conn.matchstick.lastSyncedBlock! > blockAfterFirst);
   });
+
+  it("returns saved entities without knowing their IDs upfront", async () => {
+    const { counter, abi, address } = await deployCounter(conn);
+    conn.matchstick.reset();
+    conn.matchstick.bind("Counter", address, abi);
+    await conn.matchstick.anchor();
+
+    const wallet = (await conn.viem.getWalletClients())[0];
+    await counter.write.setValue([7n], { account: wallet.account, chain: wallet.chain });
+
+    const snap = await conn.matchstick.indexSnapshot([]);
+
+    const [entity] = snap.saved("Counter");
+    assert.ok(entity);
+    assert.equal(entity.value, "7");
+  });
 });

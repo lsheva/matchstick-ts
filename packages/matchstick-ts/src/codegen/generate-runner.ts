@@ -104,7 +104,7 @@ export async function generateRunner(options: GenerateRunnerOptions): Promise<vo
 
   const code = `import { test, clearStore, readFile, createMockedFunction, dataSourceMock } from "matchstick-as/assembly/index";
 import { Address, json, log, store } from "@graphprotocol/graph-ts";
-import { createMockEvent, JSONObjectBuilder, entityToJson } from "${assemblyImport}";
+import { createMockEvent, JSONObjectBuilder, entityToJson, getAllTrackedTypes, getTrackedIdsForType, jsonString, jsonArray } from "${assemblyImport}";
 ${handlerImportLines.join("\n")}
 ${eventTypeImportLines.join("\n")}
 
@@ -157,6 +157,9 @@ ${routes.join("\n")}
   // Group reads by entity type for compact nested output.
   const byType = new Map<string, JSONObjectBuilder>();
   const typeOrder: Array<string> = [];
+  // Track seen (entityType:id) pairs to avoid duplicate keys in the JSON output
+  // when a tracked entity is also listed in explicit reads.
+  const seenIds = new Set<string>();
 
   for (let i = 0; i < reads.length; i++) {
     const r = reads[i].toObject();
@@ -171,7 +174,40 @@ ${routes.join("\n")}
     const entity = store.get(entityType, id);
     const value = entity ? entityToJson(entity) : "null";
     byType.get(entityType)!.setRaw(id, value);
+    seenIds.add(entityType + ":" + id);
   }
+
+  // Collect entities tracked via trackSave() (injected into save() by the
+  // schema patch). Add them to byType so they appear in SNAPSHOT, and emit a
+  // separate MANIFEST: line with just the discovered IDs.
+  const trackedTypes = getAllTrackedTypes();
+  const manifestBuilder = new JSONObjectBuilder();
+
+  for (let t = 0; t < trackedTypes.length; t++) {
+    const entityType = trackedTypes[t];
+    const trackedIds = getTrackedIdsForType(entityType);
+    const idList: Array<string> = [];
+
+    for (let j = 0; j < trackedIds.length; j++) {
+      const id = trackedIds[j];
+      idList.push(jsonString(id));
+
+      // Only add to SNAPSHOT if not already covered by an explicit read.
+      if (!seenIds.has(entityType + ":" + id)) {
+        if (!byType.has(entityType)) {
+          byType.set(entityType, new JSONObjectBuilder());
+          typeOrder.push(entityType);
+        }
+        const entity = store.get(entityType, id);
+        const value = entity ? entityToJson(entity) : "null";
+        byType.get(entityType)!.setRaw(id, value);
+      }
+    }
+
+    manifestBuilder.setRaw(entityType, jsonArray(idList));
+  }
+
+  log.info("MANIFEST: " + manifestBuilder.toString(), []);
 
   const outer = new JSONObjectBuilder();
   for (let i = 0; i < typeOrder.length; i++) {

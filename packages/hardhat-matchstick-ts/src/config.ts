@@ -6,7 +6,7 @@ export function matchstickRunOptionsFromConfig(
   config: MatchstickUserConfig | undefined,
 ): Pick<
   RunOptions,
-  "subgraphYaml" | "schemaPath" | "runnerPath" | "typesPath" | "jsonDir" | "verbose"
+  "subgraphYaml" | "schemaPath" | "runnerPath" | "typesPath" | "jsonDir" | "verbose" | "generatedSchemaPath"
 > {
   if (config === undefined) {
     return {};
@@ -18,5 +18,6 @@ export function matchstickRunOptionsFromConfig(
     typesPath: config.typesPath,
     jsonDir: config.jsonDir,
     verbose: config.verbose,
+    generatedSchemaPath: config.generatedSchemaPath,
   };
 }

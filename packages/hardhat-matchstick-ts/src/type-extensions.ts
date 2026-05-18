@@ -20,6 +20,12 @@ export interface MatchstickUserConfig {
   startBlock?: bigint;
   /** Print full Matchstick / `graph test` output after each replay. */
   verbose?: boolean;
+  /**
+   * Path to the `graph codegen`-generated `schema.ts`. Patched at test time
+   * to enable {@link Snapshot.discoveredIds}. Defaults to `"generated/schema.ts"`.
+   * Pass an empty string to disable patching.
+   */
+  generatedSchemaPath?: string;
 }
 
 declare module "hardhat/config" {
