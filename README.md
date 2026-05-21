@@ -86,6 +86,7 @@ describe("subgraph integration", () => {
     const wallet = (await conn.viem.getWalletClients())[0];
 
     conn.matchstick.bind("MyDataSource", address, abi);
+    await conn.matchstick.captureViewMocks();
     await conn.matchstick.anchor();
 
     await contract.write.myEvent([/* args */], {

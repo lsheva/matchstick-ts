@@ -1,6 +1,8 @@
 type Counter @entity(immutable: false) {
   id: ID!
   value: BigInt!
+  "newValue * Counter.multiplier — reads multiplier via try_multiplier(). Stays 0 when the call reverts (e.g. no captureViewMocks)."
+  scaledValue: BigInt!
 }
 
 type SignedCounter @entity(immutable: false) {

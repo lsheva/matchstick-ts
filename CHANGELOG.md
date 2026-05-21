@@ -17,19 +17,22 @@
 - `MatchstickHarness.mockViewsFromContract(client, abi, address)` — async sibling of
   `mockViewsAsReverting` that captures real return values.
 - `SubgraphLogSync`:
-  - New constructor option `viewClient` — when set, every `bind()` call kicks off an
-    `eth_call` sweep against this client and upgrades the per-function revert mocks
-    to return mocks. Sweeps are awaited transparently inside `ingest`/`index`.
-  - `bind(name, address, abi, { viewClient })` — per-binding override.
-  - `awaitMockPopulation()` — exposed for tests that want to inspect mock state
-    before the first `ingest`.
+  - `bind(name, address, abi, { mocks })` — stays synchronous (pure bookkeeping):
+    records the data source, seeds a revert mock per 0-arg view fn, and accepts
+    optional preset mocks via `options.mocks`.
+  - `captureViewMocks({ dataSource?, viewClient? })` — new async sibling that
+    probes bound contracts via `eth_call` and upgrades revert mocks to return
+    mocks with real on-chain values. Defaults to every bound source.
+  - `addCallMocks(mocks)` — sync helper to add/override individual mocks.
+  - Constructor `viewClient` option supplies the default client for
+    `captureViewMocks`.
 
 ### `hardhat-matchstick-ts`
 
-- The plugin now forwards the connection's viem `PublicClient.readContract` as the
-  default `viewClient` for the `NetworkConnection.matchstick` indexer. Existing
-  `conn.matchstick.bind(...)` calls automatically populate realistic return-value
-  mocks — no test changes required.
+- The plugin forwards the connection's viem `PublicClient.readContract` as the
+  default `viewClient` for the `NetworkConnection.matchstick` indexer, so tests
+  can just write `await conn.matchstick.captureViewMocks()` after `bind()` to
+  populate realistic return-value mocks.
 
 ## 0.1.0 — 2026-05-16
 

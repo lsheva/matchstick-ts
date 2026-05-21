@@ -29,6 +29,18 @@ const counterAbi = [
     stateMutability: "nonpayable",
     type: "function",
   },
+  {
+    inputs: [],
+    name: "multiplier",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [{ internalType: "uint256", name: "_multiplier", type: "uint256" }],
+    stateMutability: "nonpayable",
+    type: "constructor",
+  },
 ] as const;
 
 export type CounterContract = GetContractReturnType<
@@ -39,7 +51,10 @@ export type CounterContract = GetContractReturnType<
 /**
  * Deploy `Counter` via viem using the Hardhat artifact produced by `hardhat compile`.
  */
-export async function deployCounter(conn: NetworkConnection): Promise<{
+export async function deployCounter(
+  conn: NetworkConnection,
+  options: { multiplier?: bigint } = {},
+): Promise<{
   counter: CounterContract;
   abi: Abi;
   address: Address;
@@ -62,7 +77,7 @@ export async function deployCounter(conn: NetworkConnection): Promise<{
   const hash = await deployContract(wallet, {
     abi: counterAbi,
     bytecode,
-    args: [],
+    args: [options.multiplier ?? 10n],
   });
   const receipt = await publicClient.waitForTransactionReceipt({ hash });
   const address = receipt.contractAddress;

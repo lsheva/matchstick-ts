@@ -68,11 +68,10 @@ export interface IndexOptions<TEntities = AugmentedEntities> extends IngestOptio
 export interface SubgraphLogSyncOptions<TEntities = AugmentedEntities> {
   client: LogsQueryingClient;
   /**
-   * Optional view-call client used to capture realistic `try_*` return
-   * values for bound contracts. When set, every {@link SubgraphLogSync.bind}
-   * call kicks off an `eth_call` sweep against this client and registers a
-   * `return` mock per 0-arg view function (falling back to a `revert` mock
-   * if the call reverts). Override per-bind via `bind(..., { viewClient })`.
+   * Default view-call client used by {@link SubgraphLogSync.captureViewMocks}
+   * to probe bound contracts. Tests typically pass viem's `PublicClient`
+   * here (the hardhat-matchstick-ts plugin wires this automatically). May
+   * be overridden per call via `captureViewMocks({ viewClient })`.
    */
   viewClient?: ViewCallingClient;
   /** First ingest when never synced and no explicit `fromBlock`. Default `0`. */
@@ -138,19 +137,6 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
   private readonly runDefaults: RunDefaults<TEntities>;
   private readonly bindings = new Map<string, DataSourceBinding>();
   private callMocks = new Map<string, CallMock>();
-  /**
-   * In-flight `eth_call` sweeps kicked off from {@link bind}; awaited inside
-   * {@link ingest}/{@link index}/{@link indexSnapshot} so callers don't need
-   * to await `bind()` to ensure the mock map is populated before the next
-   * Matchstick run.
-   */
-  private pendingMockPopulation: Promise<void>[] = [];
-  /**
-   * Monotonic counter bumped on every {@link reset}. Each {@link bind} closes
-   * over the current value so a sweep that settles AFTER a reset is dropped
-   * instead of leaking into the next test's mock map.
-   */
-  private bindGeneration = 0;
   private events: CapturedEvent[] = [];
   private syncedBlock: bigint | undefined;
 
@@ -175,58 +161,73 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
   }
 
   /**
-   * Register a deployed contract as a subgraph data source.
+   * Register a deployed contract as a subgraph data source. Pure bookkeeping
+   * — no `eth_call`s, safe to call without `await`.
    *
    * - Records the (address, abi) so {@link ingest} can fetch & decode logs.
-   * - Seeds every 0-arg view/pure function as a `revert` mock so handlers
-   *   doing best-effort `try_*` reads don't crash Matchstick on "no mocked
-   *   function".
-   * - When `options.viewClient` is supplied, asynchronously upgrades those
-   *   revert mocks to `return` mocks carrying the *real* on-chain return
-   *   value. The sweep runs in the background; {@link ingest} / {@link index}
-   *   await it transparently before each Matchstick run, so callers don't
-   *   need to await `bind()` itself.
+   * - Seeds a `revert` mock per 0-arg view/pure function on `abi` so handler
+   *   `try_*` reads resolve gracefully (reverted = true) by default.
+   * - `options.mocks` overrides individual entries — pass `return` mocks for
+   *   any reads handlers should observe a value for.
+   *
+   * To upgrade the seeded revert mocks to `return` mocks carrying *real*
+   * on-chain values, call {@link captureViewMocks} after binding (async).
    */
   bind(
     dataSource: AugmentedDataSources,
     address: Address,
     abi: Abi,
-    options: { viewClient?: ViewCallingClient } = {},
+    options: { mocks?: CallMock[] } = {},
   ): this {
     this.bindings.set(dataSource, { name: dataSource, address, abi });
     for (const mock of viewFunctionRevertMocks(abi, address)) {
       this.callMocks.set(mockKey(mock), mock);
     }
-    const viewClient = options.viewClient ?? this.defaultViewClient;
-    if (viewClient !== undefined) {
-      // Pin to the current `callMocks` map and `bindGeneration` so a sweep
-      // that settles AFTER `reset()` (which swaps the map and bumps the
-      // generation) cannot leak mocks into the next test's state.
-      const targetMap = this.callMocks;
-      const targetGeneration = this.bindGeneration;
-      this.pendingMockPopulation.push(
-        captureViewMocksFromContract(viewClient, abi, address).then((mocks) => {
-          if (targetGeneration !== this.bindGeneration) return;
-          for (const mock of mocks) {
-            targetMap.set(mockKey(mock), mock);
-          }
-        }),
-      );
+    for (const mock of options.mocks ?? []) {
+      this.callMocks.set(mockKey(mock), mock);
+    }
+    return this;
+  }
+
+  /** Add or override individual call mocks (sync). */
+  addCallMocks(mocks: CallMock[]): this {
+    for (const mock of mocks) {
+      this.callMocks.set(mockKey(mock), mock);
     }
     return this;
   }
 
   /**
-   * Await any in-flight view-call sweeps queued by {@link bind}. Called
-   * automatically by {@link ingest}, {@link index}, and {@link indexSnapshot}
-   * — exposed for tests that want to inspect {@link callMocks} directly.
+   * Probe every 0-arg view/pure function on bound contracts via `eth_call`
+   * and upgrade the seeded revert mocks to `return` mocks carrying the real
+   * on-chain return values (reverts stay as revert mocks).
+   *
+   * Defaults to probing every bound data source; pass `options.dataSource`
+   * to limit it to one. Uses {@link SubgraphLogSyncOptions.viewClient} or
+   * the per-call `options.viewClient`, in that order.
+   *
+   * @throws if no view client is available.
    */
-  async awaitMockPopulation(): Promise<void> {
-    while (this.pendingMockPopulation.length > 0) {
-      const pending = this.pendingMockPopulation;
-      this.pendingMockPopulation = [];
-      await Promise.all(pending);
+  async captureViewMocks(
+    options: { dataSource?: AugmentedDataSources; viewClient?: ViewCallingClient } = {},
+  ): Promise<this> {
+    const client = options.viewClient ?? this.defaultViewClient;
+    if (client === undefined) {
+      throw new Error(
+        "SubgraphLogSync.captureViewMocks: no viewClient configured — pass one to the constructor or to this call",
+      );
     }
+    const targets = this.resolveBindings(
+      options.dataSource === undefined ? undefined : [options.dataSource],
+    );
+
+    for (const target of targets) {
+      const mocks = await captureViewMocksFromContract(client, target.abi, target.address);
+      for (const mock of mocks) {
+        this.callMocks.set(mockKey(mock), mock);
+      }
+    }
+    return this;
   }
 
   /**
@@ -245,7 +246,6 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
    * Does not run the subgraph mapping — use {@link index} for that.
    */
   async ingest(options: IngestOptions = {}): Promise<IngestStats> {
-    await this.awaitMockPopulation();
     const toBlock =
       options.toBlock === undefined || options.toBlock === "latest"
         ? await this.client.getBlockNumber()
@@ -354,19 +354,9 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
    */
   async reset(): Promise<void> {
     this.bindings.clear();
-    // Swap in a fresh map (not `.clear()`) so any in-flight mock-population
-    // promises that resolve after this point write into the orphaned map
-    // and not the new one. The generation bump below ensures the early-out
-    // guard in `bind()`'s callback catches them too.
-    this.callMocks = new Map();
-    this.pendingMockPopulation = [];
-    this.bindGeneration++;
+    this.callMocks.clear();
     this.events = [];
     this.syncedBlock = undefined;
-    await cleanupGeneratedFiles({
-      runnerPath: this.runDefaults.runnerPath ?? "tests/runner.test.ts",
-      jsonDir: this.runDefaults.jsonDir ?? DEFAULT_TMP_DIR,
-    });
   }
 
   private resolveBindings(names: readonly AugmentedDataSources[] | undefined): DataSourceBinding[] {
