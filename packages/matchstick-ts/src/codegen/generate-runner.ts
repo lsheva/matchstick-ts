@@ -103,8 +103,8 @@ export async function generateRunner(options: GenerateRunnerOptions): Promise<vo
   }
 
   const code = `import { test, clearStore, readFile, createMockedFunction, dataSourceMock } from "matchstick-as/assembly/index";
-import { Address, json, log, store } from "@graphprotocol/graph-ts";
-import { createMockEvent, JSONObjectBuilder, entityToJson, getAllTrackedTypes, getTrackedIdsForType, jsonString, jsonArray } from "${assemblyImport}";
+import { Address, ethereum, json, log, store } from "@graphprotocol/graph-ts";
+import { createMockEvent, ethereumValueFromTypedJson, JSONObjectBuilder, entityToJson, getAllTrackedTypes, getTrackedIdsForType, jsonString, jsonArray } from "${assemblyImport}";
 ${handlerImportLines.join("\n")}
 ${eventTypeImportLines.join("\n")}
 
@@ -121,9 +121,12 @@ test("process events and dump store snapshot", () => {
     dataSourceMock.setAddress(firstAddr);
   }
 
-  // Install revert-mocks for all view-call reads handlers may perform.
-  // The handlers wrap these in \`try_*\`, so reverts resolve gracefully and
-  // Matchstick stops complaining about unmocked functions.
+  // Install view-call mocks for the reads handlers may perform. Each entry
+  // is one of:
+  //   { kind: "revert", address, name, signature }
+  //   { kind: "return", address, name, signature, outputs: [...], returns: [...] }
+  // Entries with no \`kind\` field default to "revert" for backward compat
+  // with pre-v0.4.0 mock payloads.
   const mocksRaw = readFile("${tempDir}/mocks.json");
   const mocks = json.fromBytes(mocksRaw).toArray();
   for (let i = 0; i < mocks.length; i++) {
@@ -131,7 +134,21 @@ test("process events and dump store snapshot", () => {
     const addr = Address.fromString(m.get("address")!.toString());
     const name = m.get("name")!.toString();
     const sig = m.get("signature")!.toString();
-    createMockedFunction(addr, name, sig).reverts();
+    const kindVal = m.get("kind");
+    const kind = kindVal != null ? kindVal.toString() : "revert";
+
+    if (kind == "return") {
+      const outputsArr = m.get("outputs")!.toArray();
+      const returnsArr = m.get("returns")!.toArray();
+      const values: ethereum.Value[] = [];
+      for (let j = 0; j < outputsArr.length; j++) {
+        const ty = outputsArr[j].toString();
+        values.push(ethereumValueFromTypedJson(ty, returnsArr[j]));
+      }
+      createMockedFunction(addr, name, sig).returns(values);
+    } else {
+      createMockedFunction(addr, name, sig).reverts();
+    }
   }
 
   for (let i = 0; i < events.length; i++) {

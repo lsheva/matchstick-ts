@@ -50,6 +50,28 @@ describe("generateRunner", () => {
     }
   });
 
+  it("dispatches mock entries by kind (revert vs return)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ss-runner-mocks-"));
+    const outputPath = join(dir, "runner.test.ts");
+    try {
+      await generateRunner({
+        subgraphYamlPath: "tests/fixtures/subgraph.yaml",
+        outputPath,
+        tempDir: "tests/.tmp",
+      });
+      const text = await readFile(outputPath, "utf8");
+      assert.match(text, /m\.get\("kind"\)/);
+      assert.match(text, /kind == "return"/);
+      assert.match(text, /m\.get\("outputs"\)/);
+      assert.match(text, /m\.get\("returns"\)/);
+      assert.match(text, /ethereumValueFromTypedJson\(/);
+      assert.match(text, /\.returns\(values\)/);
+      assert.match(text, /\.reverts\(\)/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("forwards per-event transactionHash/blockNumber/logIndex/address into createMockEvent", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ss-runner-fields-"));
     const outputPath = join(dir, "runner.test.ts");

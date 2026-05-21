@@ -5,10 +5,12 @@
  */
 import { parseEventLogs, type Abi, type Address, type Log } from "viem";
 import {
+  captureViewMocksFromContract,
   serializeParams,
   viewFunctionRevertMocks,
+  type CallMock,
   type CapturedEvent,
-  type RevertMock,
+  type ViewCallingClient,
 } from "./event-capture.ts";
 import {
   cleanupGeneratedFiles,
@@ -53,7 +55,10 @@ export interface IngestStats {
   totalEvents: number;
 }
 
-type RunDefaults<TEntities> = Omit<RunOptions<TEntities>, "events" | "reads" | "revertMocks">;
+type RunDefaults<TEntities> = Omit<
+  RunOptions<TEntities>,
+  "events" | "reads" | "callMocks" | "revertMocks"
+>;
 
 /** Options for {@link SubgraphLogSync.index} (log ingest range + Matchstick run overrides). */
 export interface IndexOptions<TEntities = AugmentedEntities> extends IngestOptions {
@@ -62,12 +67,20 @@ export interface IndexOptions<TEntities = AugmentedEntities> extends IngestOptio
 
 export interface SubgraphLogSyncOptions<TEntities = AugmentedEntities> {
   client: LogsQueryingClient;
+  /**
+   * Optional view-call client used to capture realistic `try_*` return
+   * values for bound contracts. When set, every {@link SubgraphLogSync.bind}
+   * call kicks off an `eth_call` sweep against this client and registers a
+   * `return` mock per 0-arg view function (falling back to a `revert` mock
+   * if the call reverts). Override per-bind via `bind(..., { viewClient })`.
+   */
+  viewClient?: ViewCallingClient;
   /** First ingest when never synced and no explicit `fromBlock`. Default `0`. */
   startBlock?: bigint;
   runDefaults?: RunDefaults<TEntities>;
 }
 
-function mockKey(mock: RevertMock): string {
+function mockKey(mock: CallMock): string {
   return `${mock.address}:${mock.signature}`;
 }
 
@@ -120,15 +133,24 @@ function sortCaptured(events: CapturedEvent[]): CapturedEvent[] {
  */
 export class SubgraphLogSync<TEntities = AugmentedEntities> {
   private readonly client: LogsQueryingClient;
+  private readonly defaultViewClient: ViewCallingClient | undefined;
   private readonly startBlock: bigint;
   private readonly runDefaults: RunDefaults<TEntities>;
   private readonly bindings = new Map<string, DataSourceBinding>();
-  private readonly revertMocks = new Map<string, RevertMock>();
+  private readonly callMocks = new Map<string, CallMock>();
+  /**
+   * In-flight `eth_call` sweeps kicked off from {@link bind}; awaited inside
+   * {@link ingest}/{@link index}/{@link indexSnapshot} so callers don't need
+   * to await `bind()` to ensure the mock map is populated before the next
+   * Matchstick run.
+   */
+  private pendingMockPopulation: Promise<void>[] = [];
   private events: CapturedEvent[] = [];
   private syncedBlock: bigint | undefined;
 
   constructor(options: SubgraphLogSyncOptions<TEntities>) {
     this.client = options.client;
+    this.defaultViewClient = options.viewClient;
     this.startBlock = options.startBlock ?? 0n;
     this.runDefaults = (options.runDefaults ?? {}) as RunDefaults<TEntities>;
   }
@@ -146,12 +168,52 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
     return this.events.length;
   }
 
-  bind(dataSource: AugmentedDataSources, address: Address, abi: Abi): this {
+  /**
+   * Register a deployed contract as a subgraph data source.
+   *
+   * - Records the (address, abi) so {@link ingest} can fetch & decode logs.
+   * - Seeds every 0-arg view/pure function as a `revert` mock so handlers
+   *   doing best-effort `try_*` reads don't crash Matchstick on "no mocked
+   *   function".
+   * - When `options.viewClient` is supplied, asynchronously upgrades those
+   *   revert mocks to `return` mocks carrying the *real* on-chain return
+   *   value. The sweep runs in the background; {@link ingest} / {@link index}
+   *   await it transparently before each Matchstick run, so callers don't
+   *   need to await `bind()` itself.
+   */
+  bind(
+    dataSource: AugmentedDataSources,
+    address: Address,
+    abi: Abi,
+    options: { viewClient?: ViewCallingClient } = {},
+  ): this {
     this.bindings.set(dataSource, { name: dataSource, address, abi });
     for (const mock of viewFunctionRevertMocks(abi, address)) {
-      this.revertMocks.set(mockKey(mock), mock);
+      this.callMocks.set(mockKey(mock), mock);
+    }
+    const viewClient = options.viewClient ?? this.defaultViewClient;
+    if (viewClient !== undefined) {
+      this.pendingMockPopulation.push(
+        captureViewMocksFromContract(viewClient, abi, address).then((mocks) => {
+          for (const mock of mocks) {
+            this.callMocks.set(mockKey(mock), mock);
+          }
+        }),
+      );
     }
     return this;
+  }
+
+  /**
+   * Await any in-flight view-call sweeps queued by {@link bind}. Called
+   * automatically by {@link ingest}, {@link index}, and {@link indexSnapshot}
+   * — exposed for tests that want to inspect {@link callMocks} directly.
+   */
+  async awaitMockPopulation(): Promise<void> {
+    if (this.pendingMockPopulation.length === 0) return;
+    const pending = this.pendingMockPopulation;
+    this.pendingMockPopulation = [];
+    await Promise.all(pending);
   }
 
   /**
@@ -170,6 +232,7 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
    * Does not run the subgraph mapping — use {@link index} for that.
    */
   async ingest(options: IngestOptions = {}): Promise<IngestStats> {
+    await this.awaitMockPopulation();
     const toBlock =
       options.toBlock === undefined || options.toBlock === "latest"
         ? await this.client.getBlockNumber()
@@ -203,9 +266,6 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
         toBlock,
       });
       const decoded = decodeLogs(logs, source.abi);
-      for (const ev of decoded) {
-        console.log("===========event: ", ev.event, "args " + ev.params);
-      }
       batch.push(...decoded);
     }
 
@@ -240,7 +300,7 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
       ...runOverrides,
       events: this.events,
       reads: [...reads],
-      revertMocks: [...this.revertMocks.values()],
+      callMocks: [...this.callMocks.values()],
     });
 
     return indexResultsFromSnapshot(snapshot, reads);
@@ -267,7 +327,7 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
       ...runOverrides,
       events: this.events,
       reads: [...reads],
-      revertMocks: [...this.revertMocks.values()],
+      callMocks: [...this.callMocks.values()],
     });
   }
 
@@ -281,7 +341,8 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
    */
   async reset(): Promise<void> {
     this.bindings.clear();
-    this.revertMocks.clear();
+    this.callMocks.clear();
+    this.pendingMockPopulation = [];
     this.events = [];
     this.syncedBlock = undefined;
     await cleanupGeneratedFiles({

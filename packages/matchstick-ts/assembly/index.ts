@@ -128,6 +128,48 @@ function jsonValueToEthereumValue(value: JSONValue): ethereum.Value {
 }
 
 /**
+ * Convert a `(solidityType, jsonValue)` pair to an `ethereum.Value` using
+ * the solidity type as the authoritative decoder — unlike
+ * {@link jsonValueToEthereumValue} which heuristically inspects the JSON
+ * string. Used to materialize the `returns: ...` payload of `CallReturnMock`
+ * entries into the typed values matchstick's `createMockedFunction(...).returns([...])`
+ * expects.
+ *
+ * Only flat scalar types are supported (the wire format only carries flat
+ * scalars). Tuples and arrays should be flattened on the TS side before
+ * being passed across.
+ */
+export function ethereumValueFromTypedJson(
+  solidityType: string,
+  value: JSONValue,
+): ethereum.Value {
+  if (solidityType == "address") {
+    return ethereum.Value.fromAddress(Address.fromString(value.toString()));
+  }
+  if (solidityType == "bool") {
+    if (value.kind == JSONValueKind.BOOL) return ethereum.Value.fromBoolean(value.toBool());
+    return ethereum.Value.fromBoolean(value.toString() == "true");
+  }
+  if (solidityType == "string") {
+    return ethereum.Value.fromString(value.toString());
+  }
+  if (solidityType.startsWith("uint")) {
+    const s = value.kind == JSONValueKind.NUMBER ? value.toI64().toString() : value.toString();
+    return ethereum.Value.fromUnsignedBigInt(BigInt.fromString(s));
+  }
+  if (solidityType.startsWith("int")) {
+    const s = value.kind == JSONValueKind.NUMBER ? value.toI64().toString() : value.toString();
+    return ethereum.Value.fromSignedBigInt(BigInt.fromString(s));
+  }
+  if (solidityType == "bytes" || solidityType.startsWith("bytes")) {
+    return ethereum.Value.fromBytes(Bytes.fromHexString(value.toString()) as Bytes);
+  }
+  // Unknown / unsupported (tuple, array). Fall back to heuristic decoding so
+  // simple cases (e.g. addresses passed as strings) still work.
+  return jsonValueToEthereumValue(value);
+}
+
+/**
  * Helper to convert string to Address.
  */
 export function address(value: string): Address {

@@ -1,6 +1,6 @@
 {
   "name": "matchstick-ts",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Typed snapshot testing for The Graph subgraphs via Matchstick — assertions in TypeScript.",
   "license": "MIT",
   "type": "module",

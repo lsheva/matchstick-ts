@@ -5,11 +5,13 @@
  */
 import type { Abi, Address, Hex } from "viem";
 import {
+  captureViewMocksFromContract,
   EventCapture,
   viewFunctionRevertMocks,
+  type CallMock,
   type CapturedEvent,
   type ReceiptAwaitingClient,
-  type RevertMock,
+  type ViewCallingClient,
 } from "./event-capture.ts";
 import {
   runMatchstickTest,
@@ -21,7 +23,7 @@ import {
 
 type RunDefaults<TEntities> = Omit<
   RunOptions<TEntities>,
-  "events" | "reads" | "revertMocks"
+  "events" | "reads" | "callMocks" | "revertMocks"
 >;
 
 export interface MatchstickHarnessOptions<TEntities = AugmentedEntities> {
@@ -29,12 +31,19 @@ export interface MatchstickHarnessOptions<TEntities = AugmentedEntities> {
   publicClient?: ReceiptAwaitingClient;
   /** Seed events (synthetic flows). */
   events?: CapturedEvent[];
-  revertMocks?: RevertMock[];
+  /**
+   * Pre-registered view-call mocks. `CallMock` is a discriminated union of
+   * `{ kind: "revert" }` and `{ kind: "return", outputs, returns }`. The
+   * legacy `RevertMock` shape (no `kind` field) is still accepted.
+   */
+  callMocks?: CallMock[];
+  /** @deprecated Use {@link MatchstickHarnessOptions.callMocks}. */
+  revertMocks?: CallMock[];
   /** subgraph.yaml / schema paths — merged into every `run()`. */
   runDefaults?: RunDefaults<TEntities>;
 }
 
-function mockKey(mock: RevertMock): string {
+function mockKey(mock: CallMock): string {
   return `${mock.address}:${mock.signature}`;
 }
 
@@ -62,7 +71,7 @@ function mockKey(mock: RevertMock): string {
 export class MatchstickHarness<TEntities = AugmentedEntities> {
   private readonly capture: EventCapture | undefined;
   private readonly manualEvents: CapturedEvent[];
-  private readonly revertMocks = new Map<string, RevertMock>();
+  private readonly callMocks = new Map<string, CallMock>();
   private readonly runDefaults: RunDefaults<TEntities>;
 
   constructor(
@@ -82,8 +91,8 @@ export class MatchstickHarness<TEntities = AugmentedEntities> {
         : new EventCapture(options.publicClient);
     this.manualEvents = [...(options.events ?? [])];
     this.runDefaults = options.runDefaults ?? {};
-    for (const mock of options.revertMocks ?? []) {
-      this.revertMocks.set(mockKey(mock), mock);
+    for (const mock of [...(options.revertMocks ?? []), ...(options.callMocks ?? [])]) {
+      this.callMocks.set(mockKey(mock), mock);
     }
   }
 
@@ -109,19 +118,44 @@ export class MatchstickHarness<TEntities = AugmentedEntities> {
   /**
    * Register 0-arg view/pure functions on `abi` to revert in Matchstick so
    * handler `try_*` reads fail gracefully. Chainable.
+   *
+   * Prefer {@link mockViewsFromContract} when a live client is available —
+   * it captures the actual on-chain return value, so handlers see realistic
+   * data instead of always seeing the `reverted = true` branch.
    */
   mockViewsAsReverting(abi: Abi, address: Address): this {
     for (const mock of viewFunctionRevertMocks(abi, address)) {
-      this.revertMocks.set(mockKey(mock), mock);
+      this.callMocks.set(mockKey(mock), mock);
     }
     return this;
   }
 
-  addRevertMocks(mocks: RevertMock[]): this {
-    for (const mock of mocks) {
-      this.revertMocks.set(mockKey(mock), mock);
+  /**
+   * Probe every 0-arg view/pure function on `abi` via the supplied client and
+   * register a `return` mock with the real on-chain value (or a `revert` mock
+   * if the call reverts). Async — await before {@link run}.
+   */
+  async mockViewsFromContract(
+    client: ViewCallingClient,
+    abi: Abi,
+    address: Address,
+  ): Promise<this> {
+    for (const mock of await captureViewMocksFromContract(client, abi, address)) {
+      this.callMocks.set(mockKey(mock), mock);
     }
     return this;
+  }
+
+  addCallMocks(mocks: CallMock[]): this {
+    for (const mock of mocks) {
+      this.callMocks.set(mockKey(mock), mock);
+    }
+    return this;
+  }
+
+  /** @deprecated Use {@link MatchstickHarness.addCallMocks}. */
+  addRevertMocks(mocks: CallMock[]): this {
+    return this.addCallMocks(mocks);
   }
 
   /** Events accumulated so far (capture buffer + any manual pushes). */
@@ -132,11 +166,11 @@ export class MatchstickHarness<TEntities = AugmentedEntities> {
     return [...this.manualEvents];
   }
 
-  /** Drop captured events and revert mocks; keeps `runDefaults`. */
+  /** Drop captured events and call mocks; keeps `runDefaults`. */
   reset(): void {
     this.capture?.clear();
     this.manualEvents.length = 0;
-    this.revertMocks.clear();
+    this.callMocks.clear();
   }
 
   /**
@@ -152,7 +186,7 @@ export class MatchstickHarness<TEntities = AugmentedEntities> {
       ...overrides,
       events: this.events(),
       reads,
-      revertMocks: [...this.revertMocks.values()],
+      callMocks: [...this.callMocks.values()],
     });
   }
 }

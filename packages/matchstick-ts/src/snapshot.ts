@@ -8,7 +8,7 @@ import { spawn } from "node:child_process";
 import { readFile, writeFile, rm, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { once } from "node:events";
-import type { CapturedEvent, RevertMock } from "./event-capture.ts";
+import type { CallMock, CapturedEvent } from "./event-capture.ts";
 import { generateRunner } from "./codegen/generate-runner.ts";
 import { generateEntities } from "./codegen/generate-entities.ts";
 /**
@@ -98,11 +98,14 @@ export interface RunOptions<TEntities = AugmentedEntities> {
   /** Entities to read out of the store after replay. */
   reads: EntityRef<TEntities>[];
   /**
-   * Functions to register as reverting mocks before processing events. Allows
-   * handler best-effort `try_*` contract reads to resolve gracefully without
-   * Matchstick failing on "no mocked function".
+   * View-call mocks registered before processing events. Each entry is a
+   * discriminated union: `{ kind: "revert" }` causes the handler's `try_*`
+   * read to return `reverted = true`, while `{ kind: "return", outputs,
+   * returns }` returns the captured value.
    */
-  revertMocks?: RevertMock[];
+  callMocks?: CallMock[];
+  /** @deprecated Use {@link RunOptions.callMocks}. */
+  revertMocks?: CallMock[];
   /**
    * Directory where JSON IO files (`events.json`, `reads.json`, `mocks.json`)
    * are written. Defaults to `tests/.tmp`. Auto-codegen passes this path to
@@ -392,7 +395,8 @@ export async function runMatchstickTest<TEntities = AugmentedEntities>(
   await mkdir(jsonDir, { recursive: true });
   await writeFile(join(jsonDir, "events.json"), JSON.stringify(options.events, null, 2));
   await writeFile(join(jsonDir, "reads.json"), JSON.stringify(options.reads, null, 2));
-  await writeFile(join(jsonDir, "mocks.json"), JSON.stringify(options.revertMocks ?? [], null, 2));
+  const mergedCallMocks = [...(options.callMocks ?? []), ...(options.revertMocks ?? [])];
+  await writeFile(join(jsonDir, "mocks.json"), JSON.stringify(mergedCallMocks, null, 2));
 
   // Patch generated/schema.ts so every save() also calls trackSave(type, id).
   // The original is restored in the finally block regardless of outcome.

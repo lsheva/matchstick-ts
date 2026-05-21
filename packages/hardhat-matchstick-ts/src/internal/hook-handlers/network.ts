@@ -26,6 +26,18 @@ export default async (): Promise<Partial<NetworkHooks>> => {
               toBlock: args.toBlock,
             }),
         },
+        // Forwards `eth_call` so `bind()` can capture realistic return values
+        // for handler `try_*` reads (instead of every read seeing a revert).
+        viewClient: {
+          readContract: (args) =>
+            publicClient.readContract({
+              address: args.address,
+              // biome-ignore lint/suspicious/noExplicitAny: viem PublicClient.readContract is invariant over Abi
+              abi: args.abi as any,
+              functionName: args.functionName,
+              args: args.args,
+            }),
+        },
         startBlock: matchstickConfig?.startBlock,
         runDefaults: matchstickRunOptionsFromConfig(matchstickConfig),
       });
