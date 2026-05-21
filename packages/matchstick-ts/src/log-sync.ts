@@ -137,7 +137,7 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
   private readonly startBlock: bigint;
   private readonly runDefaults: RunDefaults<TEntities>;
   private readonly bindings = new Map<string, DataSourceBinding>();
-  private readonly callMocks = new Map<string, CallMock>();
+  private callMocks = new Map<string, CallMock>();
   /**
    * In-flight `eth_call` sweeps kicked off from {@link bind}; awaited inside
    * {@link ingest}/{@link index}/{@link indexSnapshot} so callers don't need
@@ -145,6 +145,12 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
    * Matchstick run.
    */
   private pendingMockPopulation: Promise<void>[] = [];
+  /**
+   * Monotonic counter bumped on every {@link reset}. Each {@link bind} closes
+   * over the current value so a sweep that settles AFTER a reset is dropped
+   * instead of leaking into the next test's mock map.
+   */
+  private bindGeneration = 0;
   private events: CapturedEvent[] = [];
   private syncedBlock: bigint | undefined;
 
@@ -193,10 +199,16 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
     }
     const viewClient = options.viewClient ?? this.defaultViewClient;
     if (viewClient !== undefined) {
+      // Pin to the current `callMocks` map and `bindGeneration` so a sweep
+      // that settles AFTER `reset()` (which swaps the map and bumps the
+      // generation) cannot leak mocks into the next test's state.
+      const targetMap = this.callMocks;
+      const targetGeneration = this.bindGeneration;
       this.pendingMockPopulation.push(
         captureViewMocksFromContract(viewClient, abi, address).then((mocks) => {
+          if (targetGeneration !== this.bindGeneration) return;
           for (const mock of mocks) {
-            this.callMocks.set(mockKey(mock), mock);
+            targetMap.set(mockKey(mock), mock);
           }
         }),
       );
@@ -210,10 +222,11 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
    * — exposed for tests that want to inspect {@link callMocks} directly.
    */
   async awaitMockPopulation(): Promise<void> {
-    if (this.pendingMockPopulation.length === 0) return;
-    const pending = this.pendingMockPopulation;
-    this.pendingMockPopulation = [];
-    await Promise.all(pending);
+    while (this.pendingMockPopulation.length > 0) {
+      const pending = this.pendingMockPopulation;
+      this.pendingMockPopulation = [];
+      await Promise.all(pending);
+    }
   }
 
   /**
@@ -341,8 +354,13 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
    */
   async reset(): Promise<void> {
     this.bindings.clear();
-    this.callMocks.clear();
+    // Swap in a fresh map (not `.clear()`) so any in-flight mock-population
+    // promises that resolve after this point write into the orphaned map
+    // and not the new one. The generation bump below ensures the early-out
+    // guard in `bind()`'s callback catches them too.
+    this.callMocks = new Map();
     this.pendingMockPopulation = [];
+    this.bindGeneration++;
     this.events = [];
     this.syncedBlock = undefined;
     await cleanupGeneratedFiles({
