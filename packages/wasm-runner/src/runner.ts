@@ -1,105 +1,130 @@
 /**
  * `WasmRunner` — the in-process replacement for `spawn("graph", ["test"])`.
  *
- * Step 2 surface:
- *   - `WasmRunner.compile(path)` reads + compiles the wasm once, returning
- *     a runner that holds the `WebAssembly.Module`.
- *   - `runner.instantiate()` produces a fresh `{ instance, host }` pair —
- *     instance has the exported handlers + AS runtime; host owns the JS
- *     state (store, memory handle) shared with the import functions.
+ * After Step 4 consolidation:
+ *   - Instantiation goes through `@assemblyscript/loader`, so we get
+ *     `__newString`, `__newArray`, `__getUint8Array`, `__pin`, `__unpin`,
+ *     `__instanceof`, and the AS runtime helpers wired automatically.
+ *   - The host shim (`createHost` from `./host.ts`) provides every
+ *     graph-ts host import the production `Counter.wasm` and the
+ *     test-driver bundle need. Both wasms work through this one path.
+ *   - `instantiate()` finishes the import handshake by calling
+ *     `host.wireRuntime(...)` with the loader-exposed runtime helpers
+ *     (memory + `__newArray` + `TypeId.Uint8Array` value), enabling the
+ *     host imports that needed those (e.g. `stringToH160`).
  *
  * Later steps will add:
- *   - `replay({events, mocks, reads}) -> RawSnapshot` (Step 3+) — drives
- *     the instance with a sequence of `CapturedEvent`s and dumps the
- *     resulting store as JSON.
- *   - Per-replay reset: TBD between reinstantiating (~1 ms) vs. shared
- *     instance + wasm-side `clearStore`.
+ *   - `replay({events, mocks, reads}) -> RawSnapshot` once we have the
+ *     event-builder + snapshot-dump on the AS side.
  */
 import { readFile } from "node:fs/promises";
+import { instantiate as loaderInstantiate } from "@assemblyscript/loader";
 import { createHost, type Host } from "./host.ts";
+import { SubgraphInstance } from "./subgraph.ts";
 
 /**
- * The minimum AS runtime surface the codec / event-builder depend on.
- * Every export is a function the host calls *into* wasm; entries marked
- * optional are nice-to-have but the runner can work without them.
+ * The minimum AS runtime + graph-ts surface the runner relies on. The
+ * loader installs `__newString` / `__getString` / `__newArray` / etc.,
+ * and the AS compiler exports `__new` / `__pin` / `__unpin` / `memory`
+ * via `--exportRuntime`. `TypeId` is graph-ts's nested namespace of
+ * runtime class IDs (e.g. `TypeId.Uint8Array.value`).
  */
-export interface WasmRuntimeExports {
+export interface InstanceExports extends Record<string, unknown> {
   memory: WebAssembly.Memory;
-  /** AS GC allocator. `__new(size, classId) -> ptr`. */
   __new: (size: number, classId: number) => number;
-  /** Pin a pointer so the AS GC doesn't collect it across host calls. */
   __pin: (ptr: number) => number;
-  /** Release a previously-pinned pointer. */
   __unpin: (ptr: number) => void;
-}
-
-/**
- * The full export shape, including subgraph handlers. Handler functions
- * accept a pointer to an `ethereum.Event` and return void. The dynamic
- * member type stays `Function` (not a typed signature) because handler
- * names vary per subgraph; callers narrow via the `handlerExports` list
- * surfaced by `inspectWasm` (or by a later `WasmRunner.handlers` map).
- */
-export interface InstanceExports extends WasmRuntimeExports {
-  [exportName: string]: unknown;
-}
-
-/**
- * Result of `instantiate()`. The host shares mutable state (store,
- * memoryHandle) with the import functions installed on this instance —
- * holding the host alongside the instance is how callers reach that
- * state.
- */
-export interface InstantiatedRunner {
-  instance: WebAssembly.Instance;
-  exports: InstanceExports;
-  host: Host;
+  __newArray: (typeId: number, values: ArrayLike<number> | number[]) => number;
+  __getUint8Array: (ptr: number) => Uint8Array;
+  __getArray: (ptr: number) => number[];
+  TypeId: Record<string, WebAssembly.Global>;
+  // `--explicitStart` makes AS top-level initialization a manual export
+  // instead of the wasm `start` section. `@assemblyscript/loader` does
+  // NOT call it for us, so the runner must invoke it post-instantiate;
+  // otherwise graph-ts globals stay uninitialized and the wasm corrupts
+  // its own data section after a handful of allocations.
+  _start: () => void;
 }
 
 export class WasmRunner {
   readonly wasmPath: string;
-  readonly module: WebAssembly.Module;
+  private readonly bytes: Uint8Array;
 
-  private constructor(wasmPath: string, module: WebAssembly.Module) {
+  private constructor(wasmPath: string, bytes: Uint8Array) {
     this.wasmPath = wasmPath;
-    this.module = module;
+    this.bytes = bytes;
   }
 
   /**
-   * Read + compile (but do not instantiate) the wasm at `path`. Compiles
-   * exactly once; the returned `WasmRunner` can be `instantiate()`d as
-   * many times as needed.
+   * Read the wasm at `path`. We hold the bytes (not a compiled
+   * `WebAssembly.Module`) because the loader's `instantiate(source,
+   * imports)` does the compile itself and prefers bytes over modules
+   * (it can register the demangled exports during instantiation).
+   *
+   * For 30-50 KB subgraph wasms the compile overhead is sub-ms, so
+   * caching the compiled module across `instantiate()` calls isn't
+   * worth the extra wiring today.
    */
   static async compile(path: string): Promise<WasmRunner> {
     const buf = await readFile(path);
-    // Copy into a plain ArrayBuffer for the same reason as `inspectWasm`:
-    // Node `Buffer` is `Uint8Array<ArrayBufferLike>`, which TS won't narrow
-    // against `SharedArrayBuffer` for the `BufferSource` overload.
+    // Copy into a plain ArrayBuffer for the same `BufferSource` typing
+    // reasons as `inspectWasm`.
     const ab = new ArrayBuffer(buf.byteLength);
     new Uint8Array(ab).set(buf);
-    const module = await WebAssembly.compile(ab);
-    return new WasmRunner(path, module);
+    return new WasmRunner(path, new Uint8Array(ab));
   }
 
   /**
-   * Build a fresh host, instantiate the module against it, attach the
-   * memory export to the host, and return the bundle.
-   *
-   * Does NOT call `_start` — graph subgraph wasms expose `_start` only
-   * as a residual AS convention; their handlers are entered via direct
-   * export calls. If a future subgraph needs explicit init, the runner
-   * will gain an opt-in `callStart: true` option.
+   * Build a fresh `SubgraphInstance` — a wasm instance plus its host
+   * shim, wired together. Internal: also bakes a factory closure into
+   * the instance so `subgraph.reset()` can rebuild the pair without
+   * the consumer having to hold a `WasmRunner` reference.
    */
-  async instantiate(): Promise<InstantiatedRunner> {
+  async instantiate(): Promise<SubgraphInstance> {
+    const factory = () => this.buildInstance();
+    const { exports, host } = await factory();
+    return new SubgraphInstance(factory, exports, host);
+  }
+
+  /**
+   * One round of: build a host, instantiate the wasm against it via
+   * @assemblyscript/loader, wire post-instantiation runtime helpers.
+   * Used by both `instantiate()` (initial build) and
+   * `SubgraphInstance.reset()` (rebuild via the captured factory).
+   */
+  private async buildInstance(): Promise<{
+    exports: InstanceExports;
+    host: Host;
+  }> {
     const host = createHost();
-    const instance = await WebAssembly.instantiate(this.module, host.imports);
-    const exports = instance.exports as unknown as InstanceExports;
-    if (!(exports.memory instanceof WebAssembly.Memory)) {
+    const { exports } = await loaderInstantiate<InstanceExports>(
+      this.bytes,
+      host.imports,
+    );
+
+    const typeIdUint8ArrayGlobal = exports.TypeId.Uint8Array;
+    if (!typeIdUint8ArrayGlobal) {
       throw new Error(
-        "wasm-runner: instantiated module does not export `memory` as a WebAssembly.Memory",
+        "wasm-runner: instantiated module is missing `TypeId.Uint8Array` export — host.stringToH160 cannot allocate bytes",
       );
     }
-    host.setMemory(exports.memory);
-    return { instance, exports, host };
+
+    host.wireRuntime({
+      memory: exports.memory,
+      newArray: exports.__newArray,
+      typeIdUint8Array: typeIdUint8ArrayGlobal.value as number,
+    });
+
+    // Must run AFTER wireRuntime: AS top-level code may call host imports
+    // (e.g. graph-ts modules that build constants via `BigInt.fromI32`)
+    // and those imports decode string ptrs via the runtime we just wired.
+    if (typeof exports._start !== "function") {
+      throw new Error(
+        "wasm-runner: module is missing `_start` — wasm must be built with `--explicitStart` and `--exportRuntime` (graph-cli defaults)",
+      );
+    }
+    exports._start();
+
+    return { exports, host };
   }
 }

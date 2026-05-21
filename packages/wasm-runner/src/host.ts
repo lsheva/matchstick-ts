@@ -1,36 +1,33 @@
 /**
- * Host shim for a graph-subgraph wasm.
+ * Host shim for graph-subgraph wasms running under the unified
+ * `WasmRunner`.
  *
- * Step 2 scope: just enough of the host surface to *instantiate* the
- * production `Counter.wasm` without crashing. Every import is wired,
- * but most are intentionally trap stubs that throw `NotImplementedError`
- * with a clear name. Calling any of them during a handler execution
- * surfaces a precise "the runner needs to implement X next" message.
+ * Responsibilities split across this module:
+ *   - Build the `WebAssembly.Imports` object that satisfies the union
+ *     of the production `Counter.wasm` and the wasm-runner test-driver
+ *     bundle's import lists.
+ *   - Implement the imports we actually need today:
+ *       env.abort                        -> decode + throw WasmAbortError
+ *       conversion.typeConversion.stringToH160 -> hex string -> Bytes20
+ *       index.store.get / store.set      -> JS-side Map<type, Map<id, ptr>>
+ *     plus capture buffers (`captured.storeGets`, `captured.storeSets`)
+ *     for assertions.
+ *   - Trap every other declared graph-ts host import with
+ *     `NotImplementedError("<module>.<name>")` so the first call to an
+ *     unwired import produces a precise "implement this next" message
+ *     rather than a generic wasm `unreachable`.
  *
- * The two non-trap imports today:
- *   - `env.abort` decodes AS string pointers via the codec and throws a
- *     JS `Error` with `file:line:col` — without this, an AS assertion
- *     failure inside wasm becomes a generic `unreachable` trap with no
- *     context.
- *   - `index.store.get` returns 0 (null) so handlers that call
- *     `Entity.load(id)` against an empty store get the expected
- *     "not found" path. `index.store.set` is *also* not yet implemented
- *     and traps — this is fine for instantiation (no handler runs
- *     during instantiate) and Step 3 will replace both with the JS-map
- *     backed implementation.
- *
- * Memory is supplied lazily: `WebAssembly.instantiate` resolves imports
- * before exports are available, so the runner calls `setMemory(...)`
- * once the instance exists. The `env.abort` shim guards against being
- * called before memory is set (shouldn't happen for `abort`, but a
- * defensive error is cheap).
+ * Memory and the loader's `__newArray` / `TypeId.Uint8Array` value
+ * aren't available until after `WebAssembly.instantiate` resolves the
+ * imports. The runner closes that loop by calling `host.wireRuntime`
+ * post-instantiation; until then, any host import that needs them
+ * throws a clear "wireRuntime not called yet" error rather than NPEing.
  */
 import { readAsString } from "./codec.ts";
 
 /**
  * Thrown when wasm calls a host import the runner hasn't implemented
- * yet. The message names the import (`module.name`) so Step 3+ knows
- * which one to fill in next.
+ * yet. The message names the import (`module.name`).
  */
 export class NotImplementedError extends Error {
   constructor(importName: string) {
@@ -58,105 +55,176 @@ export class WasmAbortError extends Error {
 }
 
 /**
- * Mutable handle the runner uses to plug in the instance's exported
- * memory after `WebAssembly.instantiate` resolves. All host functions
- * close over this object rather than the memory directly so the import
- * map is constructible *before* the instance exists.
+ * Recorded `store.set(type, id, entityPtr)` call. `entityPtr` is an
+ * opaque pointer into wasm memory — entity-payload decoding (TypedMap
+ * walking) lives in a later step.
  */
-export interface MemoryHandle {
-  memory: WebAssembly.Memory | null;
+export interface CapturedStoreSet {
+  entityType: string;
+  id: string;
+  entityPtr: number;
 }
 
 /**
- * Public host object handed back from `createHost`. The `imports` field
- * is consumed by `WebAssembly.instantiate`; everything else is exposed
- * for the runner and tests to inspect store contents, set memory, etc.
+ * Recorded `store.get(type, id)` call. The lookup result (the pointer
+ * we returned) isn't recorded — tests assert on what the wasm asked
+ * for, not what we answered with.
+ */
+export interface CapturedStoreGet {
+  entityType: string;
+  id: string;
+}
+
+/**
+ * Capture buffers populated by host imports during a handler run.
+ * Reset between runs by reassigning fresh arrays on the `Host` (the
+ * runner does this when a caller asks to clear state, but the spike
+ * tests just create a fresh runner per assertion).
+ */
+export interface HostCaptured {
+  storeSets: CapturedStoreSet[];
+  storeGets: CapturedStoreGet[];
+}
+
+/**
+ * Post-instantiation runtime helpers the host needs to allocate things
+ * in wasm memory (for `stringToH160`) and read strings out of it (for
+ * `store.set` arg decoding).
+ */
+export interface HostRuntime {
+  memory: WebAssembly.Memory;
+  /** Loader's `__newArray(id, values) -> ptr`. */
+  newArray: (typeId: number, values: ArrayLike<number> | number[]) => number;
+  /** Class id of `Uint8Array` from the wasm's RTTI. */
+  typeIdUint8Array: number;
+}
+
+/**
+ * Public host object handed back from `createHost`. The `imports`
+ * field is consumed by the loader's `instantiate`; everything else is
+ * exposed for the runner and tests.
  */
 export interface Host {
   imports: WebAssembly.Imports;
-  memoryHandle: MemoryHandle;
+  captured: HostCaptured;
   /**
-   * In-memory entity store. Maps `entityType -> id -> ptr-into-wasm`.
-   * Step 2 leaves this empty; Step 3 wires `store.get/set` to read/write
-   * it. Exposed on `Host` so tests can assert on its contents directly.
+   * JS-side entity store keyed by (entityType, id) -> entityPtr.
+   * Populated by `store.set` and consulted by `store.get`. Note this
+   * is the "Variant A" approach from the plan: pointers live in JS
+   * across handler calls. Step 5+ may switch to in-wasm storage.
    */
   store: Map<string, Map<string, number>>;
-  setMemory(memory: WebAssembly.Memory): void;
+  /**
+   * Called once by the runner after `WebAssembly.instantiate` resolves
+   * and the instance's runtime exports are visible. After this call,
+   * the host imports can decode string pointers / allocate Uint8Arrays.
+   */
+  wireRuntime(runtime: HostRuntime): void;
 }
 
-/**
- * Build the import object for a graph-subgraph wasm.
- *
- * The returned `Host` shares state (memoryHandle, store) with the
- * import functions via closure, so `WebAssembly.instantiate(module,
- * host.imports)` followed by `host.setMemory(instance.exports.memory)`
- * is the standard handshake.
- */
 export function createHost(): Host {
-  const memoryHandle: MemoryHandle = { memory: null };
+  const captured: HostCaptured = { storeSets: [], storeGets: [] };
   const store = new Map<string, Map<string, number>>();
+  let runtime: HostRuntime | null = null;
 
-  function requireMemory(): WebAssembly.Memory {
-    if (memoryHandle.memory === null) {
+  function requireRuntime(): HostRuntime {
+    if (runtime === null) {
       throw new Error(
-        "wasm-runner: host import called before memory was attached (call host.setMemory after instantiation)",
+        "wasm-runner: host import called before wireRuntime() — the runner must call host.wireRuntime() after instantiate()",
       );
     }
-    return memoryHandle.memory;
+    return runtime;
   }
 
-  // env.abort is special-cased: AS calls it on assertion failure /
-  // null deref / out-of-bounds, and we want a human-readable error
-  // rather than a generic `unreachable` trap.
   function abort(
     msgPtr: number,
     filePtr: number,
     line: number,
     column: number,
   ): never {
-    const memory = requireMemory();
-    const message = readAsString(memory, msgPtr);
-    const file = readAsString(memory, filePtr);
-    throw new WasmAbortError(message, file, line, column);
+    const memory = requireRuntime().memory;
+    throw new WasmAbortError(
+      readAsString(memory, msgPtr),
+      readAsString(memory, filePtr),
+      line,
+      column,
+    );
   }
 
-  const notImpl =
+  function stringToH160(strPtr: number): number {
+    const rt = requireRuntime();
+    const hex = readAsString(rt.memory, strPtr);
+    const clean =
+      hex.startsWith("0x") || hex.startsWith("0X") ? hex.slice(2) : hex;
+    if (clean.length !== 40) {
+      throw new Error(
+        `stringToH160: expected 40 hex chars, got ${clean.length} (from "${hex}")`,
+      );
+    }
+    const bytes = new Uint8Array(20);
+    for (let i = 0; i < 20; i++) {
+      bytes[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+    }
+    return rt.newArray(rt.typeIdUint8Array, bytes);
+  }
+
+  function storeGet(typePtr: number, idPtr: number): number {
+    const rt = requireRuntime();
+    const entityType = readAsString(rt.memory, typePtr);
+    const id = readAsString(rt.memory, idPtr);
+    captured.storeGets.push({ entityType, id });
+    return store.get(entityType)?.get(id) ?? 0;
+  }
+
+  function storeSet(
+    typePtr: number,
+    idPtr: number,
+    entityPtr: number,
+  ): void {
+    const rt = requireRuntime();
+    const entityType = readAsString(rt.memory, typePtr);
+    const id = readAsString(rt.memory, idPtr);
+    captured.storeSets.push({ entityType, id, entityPtr });
+    let byId = store.get(entityType);
+    if (!byId) {
+      byId = new Map();
+      store.set(entityType, byId);
+    }
+    byId.set(id, entityPtr);
+  }
+
+  const trap =
     (importName: string): ((...args: unknown[]) => never) =>
-    (..._args: unknown[]) => {
+    () => {
       throw new NotImplementedError(importName);
     };
 
   const imports: WebAssembly.Imports = {
-    env: {
-      abort,
-    },
+    env: { abort },
     conversion: {
-      "typeConversion.bytesToHex": notImpl("conversion.typeConversion.bytesToHex"),
-      "typeConversion.bigIntToString": notImpl(
+      "typeConversion.stringToH160": stringToH160,
+      "typeConversion.bytesToHex": trap("conversion.typeConversion.bytesToHex"),
+      "typeConversion.bigIntToString": trap(
         "conversion.typeConversion.bigIntToString",
       ),
     },
-    ethereum: {
-      "ethereum.call": notImpl("ethereum.ethereum.call"),
-    },
+    ethereum: { "ethereum.call": trap("ethereum.ethereum.call") },
     numbers: {
-      "bigInt.times": notImpl("numbers.bigInt.times"),
-      "bigDecimal.toString": notImpl("numbers.bigDecimal.toString"),
+      "bigInt.times": trap("numbers.bigInt.times"),
+      "bigDecimal.toString": trap("numbers.bigDecimal.toString"),
     },
     index: {
-      // Returning 0 (null pointer) means "no entity for that (type, id)".
-      // Safe for instantiation; Step 3 swaps in the real lookup.
-      "store.get": (_typePtr: number, _idPtr: number): number => 0,
-      "store.set": notImpl("index.store.set"),
+      "store.get": storeGet,
+      "store.set": storeSet,
     },
   };
 
   return {
     imports,
-    memoryHandle,
+    captured,
     store,
-    setMemory(memory: WebAssembly.Memory) {
-      memoryHandle.memory = memory;
+    wireRuntime(rt) {
+      runtime = rt;
     },
   };
 }
