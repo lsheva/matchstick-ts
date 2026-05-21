@@ -6,10 +6,10 @@ todos:
     content: "Phase 0 spike: instantiate futures-marketplace wasm with minimal host (abort, log, typeConversion subset), fire one OrderCreated event, dump Order entity. Benchmark 100-event replay vs graph test."
     status: pending
   - id: vendor-graph-ts
-    content: "Phase 1a: scaffold packages/graph-ts-vendored as a fork of @graphprotocol/graph-ts. Rewrite typeConversion, crypto.keccak256, json.toI64/U64/F64/BigInt, ens, dataSource as pure AS. Leave bigInt, bigDecimal, ipfs, json.fromBytes as declare (host)."
+    content: "Phase 1a: add packages/graph-ts-vendored as a git submodule pointing at a personal fork of graphprotocol/graph-ts on a vendored-as-bodies branch. Rewrite typeConversion, crypto.keccak256, json.toI64/U64/F64/BigInt, ens, dataSource as pure AS — one logical commit per module so each is upstreamable. Leave bigInt, bigDecimal, ipfs, json.fromBytes as declare (host). Keep file layout byte-identical to upstream so tsconfig paths still resolve."
     status: pending
   - id: vendor-matchstick-as
-    content: "Phase 1b: scaffold packages/matchstick-as-vendored. Move store and mockFunction into pure AS over in-wasm maps. Make _registerTest/_registerDescribe/_registerHook no-ops. Add exported __dumpSnapshot that matches existing SNAPSHOT/MANIFEST JSON shape."
+    content: "Phase 1b: scaffold packages/matchstick-as-vendored as a plain folder (NOT a submodule — changes are forky, not upstreamable). Include a VENDORED_FROM.md with upstream SHA + license. Move store and mockFunction into pure AS over in-wasm maps. Make _registerTest/_registerDescribe/_registerHook no-ops. Add exported __dumpSnapshot that matches existing SNAPSHOT/MANIFEST JSON shape."
     status: pending
   - id: tsconfig-paths
     content: Wire indexer tsconfig (test variant only) to resolve @graphprotocol/graph-ts and matchstick-as/assembly to the vendored packages. Confirm production graph build still uses upstream.
@@ -94,8 +94,8 @@ flowchart LR
 
 New packages under [packages/](packages/):
 
-- `packages/graph-ts-vendored/` — fork of `@graphprotocol/graph-ts` with the host-declared namespaces rewritten as real AS impls. Same public API; the indexer's test build resolves `@graphprotocol/graph-ts` here via tsconfig paths.
-- `packages/matchstick-as-vendored/` — fork of `matchstick-as/assembly/*` with `clearStore`, `mockFunction`, `dataSourceMock`, `countEntities` rewritten as pure AS over an in-wasm store + mock registry.
+- `packages/graph-ts-vendored/` — **git submodule** of a personal fork of `graphprotocol/graph-ts`, checked out to a `vendored-as-bodies` branch. Host-declared namespaces are rewritten as real AS impls. Same public API and file layout; the indexer's test build resolves `@graphprotocol/graph-ts` here via tsconfig paths. Submodule rather than vendored copy so individual upstreamable commits can be PR'd to graphprotocol without history reconstruction (see "Upstreaming strategy" below).
+- `packages/matchstick-as-vendored/` — **plain folder, not a submodule.** Fork of `matchstick-as/assembly/*` with `clearStore`, `mockFunction`, `dataSourceMock`, `countEntities` rewritten as pure AS over an in-wasm store + mock registry, plus `_register*` neutered. These changes contradict matchstick's purpose (it _is_ the test runtime); they're not upstreamable, so submodule machinery would be pure overhead. Includes a `VENDORED_FROM.md` recording the upstream SHA + license.
 - `packages/wasm-runner/` — TS package. The `graph test` replacement. Loads the wasm, exposes `WasmRunner.replay(events, mocks) -> Snapshot`.
 
 [packages/matchstick-ts/src/snapshot.ts](packages/matchstick-ts/src/snapshot.ts) and [packages/matchstick-ts/src/log-sync.ts](packages/matchstick-ts/src/log-sync.ts) get a new code path that uses `WasmRunner` instead of `spawn("graph", ...)`. Existing matchstick path stays as fallback under a `runner: "matchstick" | "native"` option until parity is proven, then is removed.
@@ -173,6 +173,67 @@ __new(size, classId) / __pin / __unpin   // wasm exports — thin wrappers
 
 Class IDs come from the wasm's `__rttiBase` table — parsed once at instantiation by [packages/wasm-runner/src/rtti.ts](packages/wasm-runner/src/rtti.ts). This avoids hardcoding IDs that change between AS compiler versions.
 
+## Upstreaming strategy
+
+`packages/graph-ts-vendored` is structured so its commit history is PR-ready against `graphprotocol/graph-ts`. `packages/matchstick-as-vendored` is not — its changes neuter matchstick's reason to exist.
+
+### graph-ts submodule layout
+
+```bash
+gh repo fork graphprotocol/graph-ts --clone=false
+git submodule add -b vendored-as-bodies \
+  git@github.com:<you>/graph-ts.git packages/graph-ts-vendored
+```
+
+Inside the submodule, the `vendored-as-bodies` branch is structured as two layers, in order:
+
+1. **Upstreamable layer** — one logical commit per module rewrite. Each commit is API-preserving and stands alone as a future PR:
+   - `typeConversion: replace declare bodies with pure AS`
+   - `json.toI64/U64/F64/toBigInt: pure AS impls`
+   - `crypto.keccak256: pure AS impl`
+   - `ens.nameByHash: stub returning null`
+   - `dataSource: read from module globals`
+2. **Runner glue layer** — commits clearly tagged `[runner-only]` in the subject. Examples: exported `__setDataSourceContext(addr, network, ctxPtr)`, any test-runtime-only seams. These never go upstream.
+
+To submit one of the upstreamable commits as a PR:
+
+```bash
+cd packages/graph-ts-vendored
+git fetch upstream
+git checkout -b pure-as-typeconversion upstream/master
+git cherry-pick <sha-of-typeConversion-commit>
+git push your-fork pure-as-typeconversion
+gh pr create --repo graphprotocol/graph-ts
+```
+
+After upstream merges, rebase `vendored-as-bodies` onto upstream and the merged commit drops out as a no-op. The parent repo (`subgraph-snapshot`) bumps the submodule SHA in a one-line commit.
+
+### Discipline that keeps the diff small
+
+- Keep `index.ts`, `common/*`, `chain/ethereum.ts`, `types/*`, `helper-functions.ts` **byte-identical** to upstream. Only the `declare namespace` bodies change.
+- Do not restructure the file layout. The tsconfig `paths` override depends on entry points matching upstream exactly; reshaping also poisons the upstream diff.
+- Each module-rewrite commit must touch only that module's file(s) plus any test added in `tests/`. No cross-cutting refactors mixed in.
+- Conformance vectors (Phase 4a) live in `packages/graph-ts-vendored/tests/` so they travel with the upstreamable commit, not in the parent repo.
+
+### Repo ergonomics
+
+- Add `--recurse-submodules` to the project's clone instructions in the root README, and to the `actions/checkout` step in CI (`with: submodules: recursive`).
+- `pnpm install` in the indexer must not reach for the npm package when the tsconfig path is active — verified by Phase 1c (`tsconfig-paths`).
+
+### matchstick-as: plain vendored copy
+
+`packages/matchstick-as-vendored/VENDORED_FROM.md`:
+
+```
+Upstream: https://github.com/LimeChain/matchstick-as
+Commit:   <pinned sha>
+License:  MIT (preserved in LICENSE.upstream)
+Notes:    Fork — diverges from upstream goals (no-op test registration,
+          wasm-side store dump). Not intended for upstreaming.
+```
+
+If, while working, a small upstreamable fragment surfaces (e.g. an isolated bug fix in `store.ts`'s entity-id normalization), extract it as a one-off PR by hand against a clean clone of upstream. Don't carry submodule machinery for the whole package on its behalf.
+
 ## Phasing
 
 ### Phase 0 — spike (1–2 days)
@@ -189,7 +250,7 @@ Exit criterion: a passing `node --test` file in [packages/wasm-runner/tests/spik
 
 ### Phase 1 — vendor graph-ts and matchstick-as (3–5 days)
 
-- Copy `@graphprotocol/graph-ts` into `packages/graph-ts-vendored/`. Keep `index.ts`, `common/*`, `chain/ethereum.ts`, `types/*`, `helper-functions.ts` byte-identical to upstream. Rewrite only the `declare namespace` blocks:
+- Fork `graphprotocol/graph-ts` on GitHub. Add it as a git submodule at `packages/graph-ts-vendored/` tracking a `vendored-as-bodies` branch (see "Upstreaming strategy" above for branch layout). Keep `index.ts`, `common/*`, `chain/ethereum.ts`, `types/*`, `helper-functions.ts` byte-identical to upstream. Rewrite only the `declare namespace` blocks, one logical commit per module so each is PR-ready:
   - `common/conversion.ts`: tier-2 typeConversion as AS bodies.
   - `common/json.ts`: `json.toI64/U64/F64/BigInt` as AS; `fromBytes`/`try_fromBytes` left as `declare` (host) — they're rare and the AS JSON parser cost isn't worth it yet.
   - `index.ts`: `crypto.keccak256` as pure AS (port `as-bignum` keccak or implement directly).
@@ -197,7 +258,7 @@ Exit criterion: a passing `node --test` file in [packages/wasm-runner/tests/spik
   - `index.ts`: `ipfs.cat/map` left as `declare` (host) — stubs in TS.
   - `common/datasource.ts`: `dataSource.*` reads from AS module globals set via an exported `__setDataSourceContext`.
   - `common/numbers.ts`: `bigInt.*` and `bigDecimal.*` left as `declare` (host) — keep on JS for `bigint` perf.
-- Copy `matchstick-as/assembly` into `packages/matchstick-as-vendored/`. Rewrite:
+- Copy `matchstick-as/assembly` into `packages/matchstick-as-vendored/` as a plain folder (no submodule). Add `VENDORED_FROM.md` with the upstream SHA and license. Rewrite:
   - `store.ts`: backed by an AS-side `Map<string, Map<string, Entity>>`.
   - `data_source_mock.ts`: setters write into the `dataSource` globals from vendored graph-ts.
   - `index.ts`: `mockFunction` records into an AS-side `Map<key, MockedCall>`; key is `address|signature|argsHash`. `_registerTest` etc. become no-ops.
@@ -240,3 +301,5 @@ Exit criterion: a passing `node --test` file in [packages/wasm-runner/tests/spik
 - **`ethereum.call` mock semantics.** matchstick is permissive about arg-matching; we should match its key-builder exactly (address lowercased, signature canonicalized, args ABI-encoded then hashed). Easy to get subtly wrong; covered by a dedicated test suite mirroring matchstick's mock tests.
 - **Snapshot dump format divergence.** The current AS runner emits a specific JSON shape ([generate-runner.ts](packages/matchstick-ts/src/codegen/generate-runner.ts) line 240-247). Vendored `__dumpSnapshot` must emit identical shape so the parser in [snapshot.ts](packages/matchstick-ts/src/snapshot.ts) doesn't change.
 - **Source maps / error reporting.** `env.abort` from AS will report wasm-internal file/line. Need to translate via the AS source map emitted at compile time, otherwise debugging handler bugs gets worse than matchstick. Implementation: load `*.wasm.map` if present, translate `abort` args.
+- **Submodule ergonomics.** Contributors who forget `--recurse-submodules` will see an empty `packages/graph-ts-vendored/` and a confusing tsconfig-paths failure. Mitigation: enforce `submodules: recursive` in CI checkout, add a preflight check in the indexer test script that errors with a clear message if the submodule directory is empty.
+- **Upstreamable / runner-glue commit discipline drifts.** If module rewrites and runner glue get mixed into one commit, the cherry-pick path for PRs breaks. Mitigation: enforce commit subjects (`[runner-only]` prefix for non-upstreamable), and gate Phase 4a conformance tests on the upstreamable commits in isolation by running them on a `cherry-pick` of just those commits onto upstream `master` in CI.

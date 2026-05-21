@@ -1,0 +1,27 @@
+{
+  "name": "wasm-runner",
+  "version": "0.0.0",
+  "private": true,
+  "description": "In-process Node.js WebAssembly runner for subgraph handlers — replaces `graph test` spawn in matchstick-ts.",
+  "license": "MIT",
+  "type": "module",
+  "types": "./src/index.ts",
+  "engines": {
+    "node": ">=22.6"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "typescript": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3"
+  }
+}
