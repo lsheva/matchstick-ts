@@ -53,10 +53,7 @@ export interface IngestStats {
   totalEvents: number;
 }
 
-type RunDefaults<TEntities> = Omit<
-  RunOptions<TEntities>,
-  "events" | "reads" | "revertMocks"
->;
+type RunDefaults<TEntities> = Omit<RunOptions<TEntities>, "events" | "reads" | "revertMocks">;
 
 /** Options for {@link SubgraphLogSync.index} (log ingest range + Matchstick run overrides). */
 export interface IndexOptions<TEntities = AugmentedEntities> extends IngestOptions {
@@ -75,35 +72,33 @@ function mockKey(mock: RevertMock): string {
 }
 
 function decodeLogs(logs: readonly Log[], abi: Abi): CapturedEvent[] {
-  const scored: { event: CapturedEvent; logIndex: number }[] = [];
+  const captured: CapturedEvent[] = [];
 
   for (const log of parseEventLogs({ logs: [...logs] as Log[], abi })) {
     if (log.blockNumber == null || log.transactionHash == null) {
       continue;
     }
-    scored.push({
+    captured.push({
+      event: log.eventName,
+      address: log.address,
+      blockNumber: Number(log.blockNumber),
       logIndex: log.logIndex ?? 0,
-      event: {
-        event: log.eventName,
-        address: log.address,
-        blockNumber: Number(log.blockNumber),
-        transactionHash: log.transactionHash,
-        params: serializeParams(log.args),
-      },
+      transactionHash: log.transactionHash,
+      params: serializeParams(log.args),
     });
   }
 
-  scored.sort((a, b) => {
-    if (a.event.blockNumber !== b.event.blockNumber) {
-      return a.event.blockNumber - b.event.blockNumber;
+  captured.sort((a, b) => {
+    if (a.blockNumber !== b.blockNumber) {
+      return a.blockNumber - b.blockNumber;
     }
-    if (a.event.transactionHash !== b.event.transactionHash) {
-      return a.event.transactionHash.localeCompare(b.event.transactionHash);
+    if (a.transactionHash !== b.transactionHash) {
+      return a.transactionHash.localeCompare(b.transactionHash);
     }
-    return a.logIndex - b.logIndex;
+    return (a.logIndex ?? 0) - (b.logIndex ?? 0);
   });
 
-  return scored.map((entry) => entry.event);
+  return captured;
 }
 
 function sortCaptured(events: CapturedEvent[]): CapturedEvent[] {
@@ -207,7 +202,11 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
         fromBlock,
         toBlock,
       });
-      batch.push(...decodeLogs(logs, source.abi));
+      const decoded = decodeLogs(logs, source.abi);
+      for (const ev of decoded) {
+        console.log("===========event: ", ev.event, "args " + ev.params);
+      }
+      batch.push(...decoded);
     }
 
     const before = this.events.length;

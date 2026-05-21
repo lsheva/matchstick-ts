@@ -182,7 +182,7 @@ function patchGeneratedSchema(content: string): string {
   const importLine = 'import { trackSave } from "matchstick-ts/assembly";';
   const patched = content.replace(
     /store\.set\(("([^"]+)"),\s*([\w.!()]+),\s*this\)/g,
-    'store.set($1, $3, this);\n      trackSave($1, $3)',
+    "store.set($1, $3, this);\n      trackSave($1, $3)",
   );
   return `${importLine}\n${patched}`;
 }
@@ -223,28 +223,24 @@ export function readsFor<
 }
 
 /** Single {@link EntityRef} — use in `index([read("Counter", "0")])`. */
-export function read<TEntities = AugmentedEntities, K extends EntityKey<TEntities> = EntityKey<TEntities>>(
-  entityType: K,
-  id: string,
-): EntityRef<TEntities> {
+export function read<
+  TEntities = AugmentedEntities,
+  K extends EntityKey<TEntities> = EntityKey<TEntities>,
+>(entityType: K, id: string): EntityRef<TEntities> {
   return { entityType, id };
 }
 
 /** Entity shape for one ref: found row or `null` if requested but missing. */
-export type EntityForRef<
-  TEntities,
-  R extends EntityRef<TEntities>,
-> = R extends { entityType: infer K }
+export type EntityForRef<TEntities, R extends EntityRef<TEntities>> = R extends {
+  entityType: infer K;
+}
   ? K extends EntityKey<TEntities>
     ? TEntities[K] | null
     : never
   : never;
 
 /** Tuple/array of entities aligned 1:1 with the refs passed to `index()`. */
-export type IndexResults<
-  TEntities,
-  R extends readonly EntityRef<TEntities>[],
-> = {
+export type IndexResults<TEntities, R extends readonly EntityRef<TEntities>[]> = {
   readonly [I in keyof R]: EntityForRef<TEntities, R[I]>;
 };
 
@@ -396,10 +392,7 @@ export async function runMatchstickTest<TEntities = AugmentedEntities>(
   await mkdir(jsonDir, { recursive: true });
   await writeFile(join(jsonDir, "events.json"), JSON.stringify(options.events, null, 2));
   await writeFile(join(jsonDir, "reads.json"), JSON.stringify(options.reads, null, 2));
-  await writeFile(
-    join(jsonDir, "mocks.json"),
-    JSON.stringify(options.revertMocks ?? [], null, 2),
-  );
+  await writeFile(join(jsonDir, "mocks.json"), JSON.stringify(options.revertMocks ?? [], null, 2));
 
   // Patch generated/schema.ts so every save() also calls trackSave(type, id).
   // The original is restored in the finally block regardless of outcome.

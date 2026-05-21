@@ -47,6 +47,16 @@ export interface CapturedEvent {
   event: string;
   address: Address;
   blockNumber: number;
+  /**
+   * Position of the log within its block. Mirrors `receipt.logs[i].logIndex` /
+   * `eth_getLogs` `logIndex`. Forwarded into `event.logIndex` on the mock
+   * event so handlers that compose IDs from `(blockNumber, logIndex)` see
+   * realistic per-event values instead of the matchstick-as default.
+   *
+   * Optional for backward-compat with hand-rolled synthetic events; when
+   * absent the AS runner defaults to 0.
+   */
+  logIndex?: number;
   transactionHash: Hex;
   /**
    * Parameters in ABI declaration order — `graph-ts`'s `JSONValue.toObject()`
@@ -117,6 +127,7 @@ export class EventCapture {
         event: log.eventName,
         address: log.address,
         blockNumber: Number(receipt.blockNumber),
+        logIndex: typeof log.logIndex === "number" ? log.logIndex : 0,
         transactionHash: receipt.transactionHash,
         params: this.serializeParams(log.args),
       };

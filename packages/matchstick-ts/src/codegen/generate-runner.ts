@@ -79,7 +79,7 @@ export async function generateRunner(options: GenerateRunnerOptions): Promise<vo
       handlersByFile.get(mappingFile)!.add(handlerName);
       eventTypesByAbi.get(abi)!.add(eventName);
       routes.push(`    } else if (eventName == "${eventName}") {
-      ${handlerName}(createMockEvent<${eventName}>(params));`);
+      ${handlerName}(createMockEvent<${eventName}>(params, txHash, blockNum, logIndex, address));`);
     }
   }
 
@@ -141,6 +141,35 @@ test("process events and dump store snapshot", () => {
     // array shape \`[[name, value], ...]\`. Calling \`.toObject()\` here would
     // discard ABI order (TypedMap iteration is not insertion-ordered).
     const params = evt.get("params")!;
+
+    // Forward receipt-derived fields onto the matchstick mock event so
+    // handlers see realistic per-event \`transaction.hash\` / \`block.number\`
+    // / \`logIndex\` / \`address\` instead of the matchstick-as defaults.
+    // Empty strings (when a JSON field is missing) instruct createMockEvent
+    // to leave the matchstick default in place.
+    let txHash = "";
+    const txHashVal = evt.get("transactionHash");
+    if (txHashVal != null) {
+      txHash = txHashVal.toString();
+    }
+
+    let blockNum = "";
+    const blockNumVal = evt.get("blockNumber");
+    if (blockNumVal != null) {
+      blockNum = blockNumVal.toI64().toString();
+    }
+
+    let logIndex = "";
+    const logIndexVal = evt.get("logIndex");
+    if (logIndexVal != null) {
+      logIndex = logIndexVal.toI64().toString();
+    }
+
+    let address = "";
+    const addressVal = evt.get("address");
+    if (addressVal != null) {
+      address = addressVal.toString();
+    }
 
     if (false) {
 ${routes.join("\n")}

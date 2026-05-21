@@ -2,6 +2,7 @@
  * Hardhat-facing indexer on a {@link NetworkConnection}: bind deployments,
  * ingest logs incrementally, query subgraph entity state via Matchstick.
  */
+import type { NetworkConnection } from "hardhat/types/network";
 import { SubgraphLogSync, type SubgraphLogSyncOptions } from "matchstick-ts";
 
 export type MatchstickIndexerOptions = SubgraphLogSyncOptions;

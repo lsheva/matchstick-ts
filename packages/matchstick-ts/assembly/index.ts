@@ -23,7 +23,8 @@ import {
 import { newMockEvent } from "matchstick-as/assembly/index";
 
 /**
- * Create a mock event from an ordered params array.
+ * Create a mock event from an ordered params array, optionally overriding
+ * the receipt-derived fields on the underlying matchstick mock event.
  *
  * Wire format (emitted by `serializeParams` on the TS side):
  *   params: [["name1", value1], ["name2", value2], ...]
@@ -33,8 +34,26 @@ import { newMockEvent } from "matchstick-as/assembly/index";
  * AS event classes access `event.parameters[i]` positionally. The `name`
  * field is forwarded to `ethereum.EventParam` purely for inspection — it
  * does not affect dispatch.
+ *
+ * The remaining args are decimal/hex strings (not `BigInt`/`Bytes`/`Address`)
+ * to make this callable from generated runner code that has already pulled
+ * scalars out of a `JSONValue`. An empty string means "leave the matchstick
+ * default in place" — preserves backward compatibility with hand-rolled
+ * single-arg call sites.
+ *
+ * @param params - ordered ABI params array
+ * @param transactionHashHex - "0x..." 32-byte hash to assign to `event.transaction.hash`
+ * @param blockNumberStr - decimal block number to assign to `event.block.number`
+ * @param logIndexStr - decimal log index to assign to `event.logIndex`
+ * @param addressHex - "0x..." 20-byte address to assign to `event.address`
  */
-export function createMockEvent<T extends ethereum.Event>(params: JSONValue): T {
+export function createMockEvent<T extends ethereum.Event>(
+  params: JSONValue,
+  transactionHashHex: string = "",
+  blockNumberStr: string = "",
+  logIndexStr: string = "",
+  addressHex: string = "",
+): T {
   const entries = params.toArray();
   const eventParams: ethereum.EventParam[] = [];
 
@@ -47,6 +66,20 @@ export function createMockEvent<T extends ethereum.Event>(params: JSONValue): T 
 
   const event = newMockEvent();
   event.parameters = eventParams;
+
+  if (transactionHashHex.length > 0) {
+    event.transaction.hash = Bytes.fromHexString(transactionHashHex) as Bytes;
+  }
+  if (blockNumberStr.length > 0) {
+    event.block.number = BigInt.fromString(blockNumberStr);
+  }
+  if (logIndexStr.length > 0) {
+    event.logIndex = BigInt.fromString(logIndexStr);
+  }
+  if (addressHex.length > 0) {
+    event.address = Address.fromString(addressHex);
+  }
+
   return changetype<T>(event);
 }
 
