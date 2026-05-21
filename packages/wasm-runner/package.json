@@ -17,11 +17,18 @@
     }
   },
   "scripts": {
+    "build:assembly": "node scripts/build-driver.mjs",
+    "pretest": "pnpm build:assembly",
     "test": "node --test tests/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
+    "@graphprotocol/graph-ts": "0.37.0",
     "@types/node": "^22.0.0",
+    "assemblyscript": "0.19.23",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@assemblyscript/loader": "0.19.23"
   }
 }
