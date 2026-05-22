@@ -33,9 +33,16 @@ export {
 export type {
   EntityFields,
   FieldValue,
+  BigDecimal,
   UnknownValue,
   DecodeRuntime,
 } from "./decode.ts";
+
+export { EventBuilder, EthValueKind, encodeSignedBigInt } from "./event-builder.ts";
+export type { EventBuilderExports } from "./event-builder.ts";
+
+export { buildBundle } from "./build.ts";
+export type { BuildBundleOptions } from "./build.ts";
 
 export { inspectWasm } from "./inspect.ts";
 export type { WasmSchema, WasmImport, WasmExport } from "./inspect.ts";
@@ -51,6 +58,7 @@ export type {
   HostRuntime,
   CapturedStoreGet,
   CapturedStoreSet,
+  CapturedLog,
 } from "./host.ts";
 
 export { readAsString } from "./codec.ts";

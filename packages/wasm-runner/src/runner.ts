@@ -35,8 +35,16 @@ export interface InstanceExports extends Record<string, unknown> {
   __pin: (ptr: number) => number;
   __unpin: (ptr: number) => void;
   __newArray: (typeId: number, values: ArrayLike<number> | number[]) => number;
+  __newString: (str: string) => number;
   __getUint8Array: (ptr: number) => Uint8Array;
   __getArray: (ptr: number) => number[];
+  /**
+   * graph-ts export: translates a graph-node `IndexForAscTypeId` enum
+   * value (the integer in `TypeId.*` globals) into the wasm's actual
+   * asc-assigned RTTI class id. Required when allocating any
+   * subgraph-specific class via `__new` / `__newArray`.
+   */
+  id_of_type: (graphNodeTypeId: number) => number;
   TypeId: Record<string, WebAssembly.Global>;
   // `--explicitStart` makes AS top-level initialization a manual export
   // instead of the wasm `start` section. `@assemblyscript/loader` does
@@ -108,11 +116,26 @@ export class WasmRunner {
         "wasm-runner: instantiated module is missing `TypeId.Uint8Array` export — host.stringToH160 cannot allocate bytes",
       );
     }
+    // graph-ts's `TypeId.*` values are graph-node's `IndexForAscTypeId`
+    // enum, not the wasm's asc-assigned RTTI class ids. Translate via
+    // the `id_of_type` graph-ts export so `__newArray` gets the right
+    // class id. (We've seen the untranslated id "happen to work" for
+    // Uint8Array in some bundles — that's coincidence, don't rely on it.)
+    const idOfType = exports.id_of_type as
+      | ((graphNodeTypeId: number) => number)
+      | undefined;
+    if (typeof idOfType !== "function") {
+      throw new Error(
+        "wasm-runner: instantiated module is missing `id_of_type` export — required to translate graph-node `TypeId.*` ids to asc class ids",
+      );
+    }
+    const ascUint8ArrayId = idOfType(typeIdUint8ArrayGlobal.value as number);
 
     host.wireRuntime({
       memory: exports.memory,
       newArray: exports.__newArray,
-      typeIdUint8Array: typeIdUint8ArrayGlobal.value as number,
+      newString: exports.__newString,
+      typeIdUint8Array: ascUint8ArrayId,
     });
 
     // Must run AFTER wireRuntime: AS top-level code may call host imports

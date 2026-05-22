@@ -1,32 +1,32 @@
 /**
- * AssemblyScript test-driver bundle.
+ * AssemblyScript scaffold module (formerly `test-driver.ts`).
  *
- * This file is compiled by `scripts/build-driver.mjs` into a wasm that
- * contains:
- *   - graph-ts (host bindings + AS impls)
- *   - the example subgraph's handlers (cross-package import below)
- *   - the exported `fire*` builders below, which JS calls to dispatch
- *     events into the handlers
+ * This file is compiled by `buildBundle()` (see `src/build.ts`) as ONE
+ * of the asc entry inputs; the other is the consumer indexer's handler
+ * entry file (the file referenced by `subgraph.yaml`'s `mapping.file`,
+ * e.g. `src/futures.ts` for futures-marketplace or `src/mapping.ts` for
+ * the example). asc merges the exports of the two entries into a
+ * single wasm:
  *
- * The reason this lives in `packages/wasm-runner/assembly` (not in
- * `packages/example/`) is that the long-term plan compiles ONE test
- * bundle per indexer-under-test, owned by the runner, not by the
- * indexer. Every indexer gets the same builder surface by linking the
- * same wasm-runner AS code with its own handlers.
+ *   - From the indexer:  `handleX(eventPtr)` per event handler.
+ *   - From this file:    `newMockEvent(paramsPtr)`, `bigIntFromU32()`,
+ *                        and the AS runtime / RTTI / TypeId surface
+ *                        pulled in transitively by graph-ts.
  *
- * Store strategy in Step 3b: we leave graph-ts's `store.get`/`store.set`
- * as host imports (the default). The JS host shim captures every
- * `store.set` call into a JS-side map and reads bytes out of wasm
- * memory for the snapshot. This is the plan's "Variant A" — pragmatic
- * for the spike. Variant B (in-wasm store) is a later step.
+ * The scaffold is intentionally indexer-agnostic — no `import` of any
+ * user mapping file lives here. That's what makes the runner work
+ * against arbitrary subgraphs without recompiling itself.
+ *
+ * `Block`/`Transaction`/`Receipt`/`Log` defaults are inlined here
+ * (rather than pulled in from `matchstick-as/assembly/defaults`) so
+ * the runner has zero dep on matchstick-as and the field shapes evolve
+ * in lockstep with graph-ts's chain types in one place.
+ *
+ * Store strategy: graph-ts's `store.get`/`store.set` remain host
+ * imports (the plan's "Variant A"). The JS host shim
+ * (`src/host.ts`) captures every `store.set` call into a JS-side map
+ * and reads entity bytes out of wasm memory for the snapshot.
  */
-
-// Cross-package import: proves `baseDir` + relative path resolution
-// works at compile time. Step 3b actually invokes one of these.
-import {
-  handleSignedValueSet,
-  handleValueSet,
-} from "../../example/src/mapping";
 
 import {
   Address,
@@ -35,7 +35,6 @@ import {
   Wrapped,
   ethereum,
 } from "@graphprotocol/graph-ts";
-import { SignedValueSet } from "../../example/generated/Counter/Counter";
 
 // ---------------------------------------------------------------------------
 // Mock-event defaults
@@ -128,7 +127,8 @@ function defaultReceipt(): ethereum.TransactionReceipt {
 /**
  * Build a fully-populated `ethereum.Event` with the given `parameters`.
  * Caller may `changetype<SubclassEvent>(...)` the result — graph-ts
- * subclasses of `ethereum.Event` are byte-identical to the base class.
+ * codegen-emitted subclasses of `ethereum.Event` are byte-identical to
+ * the base class.
  */
 function newMockEventWithParams(
   params: Array<ethereum.EventParam>,
@@ -147,51 +147,27 @@ function newMockEventWithParams(
 
 /**
  * Smoke export: round-trips a u32 through graph-ts's `BigInt.fromU32`.
- * Tests call this to confirm the compiled wasm wired graph-ts in
- * correctly. Returns a pointer to an AS-managed BigInt (= Uint8Array of
- * signed LE bytes) which JS reads via the loader's `__getUint8Array`.
+ * Lives here so the build smoke-test (`tests/bundle-build.test.ts`)
+ * has a graph-ts call it can prove went round-trip without depending
+ * on any handler being exported by the bundle.
  */
 export function bigIntFromU32(value: u32): BigInt {
   return BigInt.fromU32(value);
 }
 
 /**
- * Returns 1 if both handler symbols resolved during AS compilation.
- * Kept as a sanity check that asc tree-shaking didn't strip the
- * cross-package imports after Step 3a.
- */
-export function handlerSymbolsLinked(): i32 {
-  const aLinked = changetype<usize>(handleSignedValueSet) != 0;
-  const bLinked = changetype<usize>(handleValueSet) != 0;
-  return aLinked && bLinked ? 1 : 0;
-}
-
-/**
- * Step 3b dispatch entry point.
+ * The one indexer-agnostic builder export. JS allocates the
+ * `Array<ethereum.EventParam>` (via `__newArray` over AS-allocated
+ * `EventParam` ptrs, each wrapping an AS-allocated `ethereum.Value`)
+ * and hands the pointer in. We wrap it in a default scaffold of
+ * Block / Transaction / Receipt / Address / logIndex etc. and hand
+ * back the `ethereum.Event` ptr.
  *
- * JS allocates a `Uint8Array` containing the signed LE bytes of the
- * intended `newValue` (which is how graph-ts's `BigInt` is laid out),
- * pins it, and hands the pointer in. We unwrap to a `BigInt`, wrap in
- * the matchstick-as mock event with our single param, and dispatch to
- * the user's handler.
- *
- * The cast `changetype<BigInt>(uint8array)` is the standard graph-ts
- * idiom — `BigInt` is just `class BigInt extends Uint8Array`, so any
- * `Uint8Array` pointer is byte-identical to a `BigInt` pointer. We pass
- * by pointer (not value) because JS already allocated the bytes; doing
- * the allocation AS-side would require shipping the raw bytes via
- * another channel and is no simpler.
+ * Subclasses of `ethereum.Event` (codegen's `OrderCreated`,
+ * `SignedValueSet`, ...) are byte-identical to the base — JS / the
+ * handler just `changetype<SubclassEvent>` the pointer it gets back.
  */
-export function fireSignedValueSet(newValueBytesPtr: usize): void {
-  const bytes = changetype<Uint8Array>(newValueBytesPtr);
-  const newValue = changetype<BigInt>(bytes);
-
-  const params = new Array<ethereum.EventParam>(1);
-  params[0] = new ethereum.EventParam(
-    "newValue",
-    ethereum.Value.fromSignedBigInt(newValue),
-  );
-
-  const event = changetype<SignedValueSet>(newMockEventWithParams(params));
-  handleSignedValueSet(event);
+export function newMockEvent(paramsPtr: usize): ethereum.Event {
+  const params = changetype<Array<ethereum.EventParam>>(paramsPtr);
+  return newMockEventWithParams(params);
 }

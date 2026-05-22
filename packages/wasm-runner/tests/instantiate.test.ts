@@ -67,16 +67,21 @@ test("WasmRunner instantiates Counter.wasm into a SubgraphInstance", async (t) =
   await t.test(
     "calling a not-yet-implemented import throws NotImplementedError",
     () => {
-      const ethereumImports = subgraph.host.imports.ethereum as Record<
+      // Pick an import that's still a trap. `numbers.bigDecimal.toString`
+      // is the most stable un-implemented entry — we won't need it until
+      // BigDecimal-using subgraphs come online.
+      const numbersImports = subgraph.host.imports.numbers as Record<
         string,
         unknown
       >;
-      const ethCall = ethereumImports["ethereum.call"] as () => void;
+      const bigDecimalToString = numbersImports[
+        "bigDecimal.toString"
+      ] as () => void;
       assert.throws(
-        () => ethCall(),
+        () => bigDecimalToString(),
         (err: unknown) =>
           err instanceof NotImplementedError &&
-          /ethereum\.ethereum\.call/.test(err.message),
+          /numbers\.bigDecimal\.toString/.test(err.message),
       );
     },
   );

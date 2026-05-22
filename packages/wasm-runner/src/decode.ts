@@ -48,9 +48,8 @@ export const ValueKind = {
 export type ValueKind = (typeof ValueKind)[keyof typeof ValueKind];
 
 /**
- * One field of a decoded entity. Mirrors the kinds we currently support;
- * `unknown` is reserved for kinds whose decoder hasn't been written yet
- * (today: BIGDECIMAL, ARRAY) so we don't silently drop data.
+ * One field of a decoded entity. `unknown` is reserved for kinds whose
+ * decoder hasn't been written yet so we don't silently drop data.
  */
 export type FieldValue =
   | string
@@ -58,8 +57,20 @@ export type FieldValue =
   | boolean
   | null
   | Uint8Array
+  | BigDecimal
   | UnknownValue
   | FieldValue[];
+
+/**
+ * Decoded graph-ts `BigDecimal`: a `digits` mantissa (signed bigint)
+ * and a base-10 `exp` exponent. Surfaced as a plain object rather than
+ * a JS `bigint` because JS has no native decimal type and silently
+ * widening to a JS `number` would lose precision.
+ */
+export interface BigDecimal {
+  digits: bigint;
+  exp: bigint;
+}
 
 export interface UnknownValue {
   __unknown: true;
@@ -159,8 +170,30 @@ export function decodeValue(
       return new Uint8Array(bytes);
     }
     case ValueKind.BIGINT: {
+      // graph-ts `BigInt` is `class BigInt extends Uint8Array` — the
+      // loader's `__getUint8Array` reads the typed-array header (buffer
+      // + dataStart + byteLength) for us, so we only need to know the
+      // sign-bytes layout. No manual pointer arithmetic.
       const bytes = runtime.__getUint8Array(dataLo);
       return decodeSignedBigInt(bytes);
+    }
+    case ValueKind.BIGDECIMAL: {
+      // graph-ts `BigDecimal` is `{ digits: BigInt, exp: BigInt }` —
+      // two pointers, 4 bytes each.
+      const u32 = new Uint32Array(runtime.memory.buffer);
+      const digitsPtr = u32[dataLo >>> 2];
+      const expPtr = u32[(dataLo + 4) >>> 2];
+      return {
+        digits: decodeSignedBigInt(runtime.__getUint8Array(digitsPtr)),
+        exp: decodeSignedBigInt(runtime.__getUint8Array(expPtr)),
+      };
+    }
+    case ValueKind.ARRAY: {
+      // `Array<Value>` is a managed-reference array; `__getArray`
+      // returns the inner element pointers as a `number[]`, which we
+      // recurse over.
+      const ptrs = runtime.__getArray(dataLo);
+      return ptrs.map((p) => decodeValue(runtime, p));
     }
     default:
       return { __unknown: true, kind, dataLo, dataHi };
