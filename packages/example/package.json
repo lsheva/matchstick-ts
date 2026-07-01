@@ -15,7 +15,8 @@
   },
   "dependencies": {
     "@graphprotocol/graph-ts": "0.37.0",
-    "matchstick-ts": "workspace:*"
+    "matchstick-ts": "workspace:*",
+    "wasm-runner": "workspace:*"
   },
   "devDependencies": {
     "@graphprotocol/graph-cli": "^0.98.1",

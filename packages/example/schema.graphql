@@ -9,3 +9,12 @@ type SignedCounter @entity(immutable: false) {
   id: ID!
   value: BigInt!
 }
+
+"Populated from the ConfigUpdated(Config) struct event — exercises tuple decoding."
+type Config @entity(immutable: false) {
+  id: ID!
+  fee: BigInt!
+  offset: BigInt!
+  treasury: Bytes!
+  active: Boolean!
+}

@@ -26,9 +26,12 @@
     "@graphprotocol/graph-ts": "0.37.0",
     "@types/node": "^22.0.0",
     "assemblyscript": "0.19.23",
+    "binaryen": "^129.0.0",
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@assemblyscript/loader": "0.19.23"
+    "@assemblyscript/loader": "0.19.23",
+    "viem": "^2.49.3",
+    "yaml": "^2.9.0"
   }
 }

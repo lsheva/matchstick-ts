@@ -23,8 +23,46 @@ const counterAbi = [
     type: "event",
   },
   {
+    anonymous: false,
+    inputs: [
+      {
+        components: [
+          { internalType: "uint256", name: "fee", type: "uint256" },
+          { internalType: "int256", name: "offset", type: "int256" },
+          { internalType: "address", name: "treasury", type: "address" },
+          { internalType: "bool", name: "active", type: "bool" },
+        ],
+        indexed: false,
+        internalType: "struct Counter.Config",
+        name: "config",
+        type: "tuple",
+      },
+    ],
+    name: "ConfigUpdated",
+    type: "event",
+  },
+  {
     inputs: [{ internalType: "uint256", name: "newValue", type: "uint256" }],
     name: "setValue",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [
+      {
+        components: [
+          { internalType: "uint256", name: "fee", type: "uint256" },
+          { internalType: "int256", name: "offset", type: "int256" },
+          { internalType: "address", name: "treasury", type: "address" },
+          { internalType: "bool", name: "active", type: "bool" },
+        ],
+        internalType: "struct Counter.Config",
+        name: "config",
+        type: "tuple",
+      },
+    ],
+    name: "setConfig",
     outputs: [],
     stateMutability: "nonpayable",
     type: "function",

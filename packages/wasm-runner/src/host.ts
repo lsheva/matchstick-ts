@@ -45,9 +45,19 @@
  * then, any host import that needs them throws a clear "wireRuntime
  * not called yet" error rather than NPEing.
  */
+import { keccak256 as viemKeccak256, type Hex } from "viem";
+import {
+  decodeReturnData,
+  encodeCalldata,
+  ethereumValueToJs,
+  parseGraphSignature,
+  jsToValuePtr,
+} from "./abi.ts";
 import { readAsString } from "./codec.ts";
 import { decodeSignedBigInt } from "./decode.ts";
-import { encodeSignedBigInt } from "./event-builder.ts";
+import { EventBuilder, encodeSignedBigInt } from "./event-builder.ts";
+import type { Asyncify } from "./asyncify.ts";
+import type { InstanceExports } from "./runner.ts";
 
 /**
  * Thrown when wasm calls a host import the runner hasn't implemented
@@ -109,6 +119,48 @@ export interface CapturedLog {
 }
 
 /**
+ * Recorded `ethereum.call(...)` invocation. Captured before the
+ * (potentially async) RPC; tests can assert on what the wasm asked
+ * for without spinning up a real provider.
+ */
+export interface CapturedEthCall {
+  contractAddress: Hex;
+  functionSignature: string;
+  /** ABI-encoded calldata (selector + args). */
+  data: Hex;
+  /** `null` if the host returned `reverted` / no `rpcClient` was set. */
+  resultHex: Hex | null;
+}
+
+/**
+ * Caller-supplied RPC client invoked by the `ethereum.call` host
+ * shim. Intentionally tiny so tests can pass a `{ async call() ... }`
+ * stub and production callers can plug a viem `PublicClient` via
+ * `makeViemRpc(client)` from `./viem-rpc.ts`.
+ *
+ * Return contract:
+ *   - resolve to `Hex` -> graph-ts sees the call succeed with that
+ *     return data,
+ *   - resolve to `null` -> graph-ts sees `CallResult.reverted = true`
+ *     (use this for genuine on-chain reverts),
+ *   - reject -> error propagates up through the handler dispatch
+ *     (use this for network / RPC infrastructure failures so the
+ *     test fails loud instead of silently masquerading as a revert).
+ *
+ * `blockNumber` is the block the call should execute against — set
+ * from `host.blockNumber` (which the caller pins per dispatch so a
+ * replay of a historical event reads state at the right block).
+ * Omitted means "latest", matching JSON-RPC defaults.
+ */
+export interface RpcClient {
+  call(args: {
+    to: Hex;
+    data: Hex;
+    blockNumber?: bigint;
+  }): Promise<Hex | null>;
+}
+
+/**
  * Capture buffers populated by host imports during a handler run.
  * Reset between runs by reassigning fresh arrays on the `Host` (the
  * runner does this when a caller asks to clear state, but the spike
@@ -118,6 +170,7 @@ export interface HostCaptured {
   storeSets: CapturedStoreSet[];
   storeGets: CapturedStoreGet[];
   logs: CapturedLog[];
+  ethCalls: CapturedEthCall[];
 }
 
 /**
@@ -133,6 +186,20 @@ export interface HostRuntime {
   newString: (str: string) => number;
   /** asc RTTI class id of `Uint8Array` (also `Bytes` / `Address`). */
   typeIdUint8Array: number;
+  /**
+   * Full instance exports — needed by the host to construct an
+   * `EventBuilder` for `ethereum.call`'s return-value encoding (it
+   * uses `__new`, `__newArray`, `__newString`, `__pin`, `id_of_type`,
+   * `TypeId.*`).
+   */
+  exports: InstanceExports;
+  /**
+   * Asyncify state machine bound to this instance. The host wraps
+   * `ethereum.call` in `asyncify.wrapAsyncImport(...)` so a real RPC
+   * round-trip can suspend the wasm stack via the binaryen-injected
+   * unwind/rewind hooks.
+   */
+  asyncify: Asyncify;
 }
 
 /**
@@ -170,6 +237,27 @@ export interface Host {
    */
   dataSourceNetwork: string;
   /**
+   * Optional RPC client that backs `ethereum.call`. When `null`
+   * (default), `ethereum.call` returns the same revert sentinel
+   * graph-ts sees from a real RPC revert — so subgraphs that wrap
+   * calls in `try_*` keep working without a network.
+   *
+   * Tests typically wire a fake `{ async call({to, data}) { ... } }`
+   * here; production callers can adapt a viem `PublicClient`.
+   */
+  rpcClient: RpcClient | null;
+  /**
+   * Block number the host pins `ethereum.call` to. Mirrors graph-node's
+   * "the block currently being processed" — for a historical replay,
+   * set this to the block number of the event being dispatched so
+   * contract reads see the same state graph-node would have.
+   *
+   * `null` (default) means "latest", which is fine for live replays
+   * but flaky for archive replays of older events. Tests targeting a
+   * specific event should always pin.
+   */
+  blockNumber: bigint | null;
+  /**
    * Called once by the runner after `WebAssembly.instantiate` resolves
    * and the instance's runtime exports are visible. After this call,
    * the host imports can decode string pointers / allocate Uint8Arrays.
@@ -185,9 +273,29 @@ export interface Host {
 const LEVEL_NAMES = ["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"];
 
 export function createHost(): Host {
-  const captured: HostCaptured = { storeSets: [], storeGets: [], logs: [] };
+  const captured: HostCaptured = {
+    storeSets: [],
+    storeGets: [],
+    logs: [],
+    ethCalls: [],
+  };
   const store = new Map<string, Map<string, number>>();
   let runtime: HostRuntime | null = null;
+  /**
+   * `ethereum.call` is sync from wasm's perspective but goes through
+   * an async RPC; we let asyncify do the unwind/rewind dance, but
+   * only on demand (no `rpcClient` -> early sync revert sentinel,
+   * no asyncify cost). Lazily wrapped at `wireRuntime` time once we
+   * have an asyncify instance to bind to.
+   */
+  let ethereumCallAsync: ((callPtr: number) => number) | null = null;
+  /**
+   * Cached `EventBuilder` for the host's own allocations (today:
+   * `ethereum.call`'s return-value encoding). Built once per
+   * `wireRuntime` because each `subgraph.reset()` makes a new
+   * instance and a new builder.
+   */
+  let hostBuilder: EventBuilder | null = null;
   /**
    * Cached `Address` (Uint8Array of 20 bytes) the `dataSource.address`
    * import returns. Lazily allocated on first call so we have a wired
@@ -387,6 +495,137 @@ export function createHost(): Host {
     return requireRuntime().newString(host.dataSourceNetwork);
   }
 
+  /**
+   * `crypto.keccak256(input: Bytes) -> Bytes`. Identical bytes-in /
+   * bytes-out semantics as graph-node's `keccak256`. Uses viem's
+   * `keccak256` (which wraps `@noble/hashes/sha3`) to avoid pulling
+   * in a separate keccak dep.
+   */
+  function cryptoKeccak256(bytesPtr: number): number {
+    const rt = requireRuntime();
+    const input = readUint8Array(rt, bytesPtr);
+    const digestHex = viemKeccak256(input);
+    // viem returns `0x` + 64 hex chars; strip prefix and decode.
+    const out = new Uint8Array(32);
+    for (let i = 0; i < 32; i++) {
+      out[i] = parseInt(digestHex.slice(2 + i * 2, 4 + i * 2), 16);
+    }
+    return rt.newArray(rt.typeIdUint8Array, out);
+  }
+
+  /**
+   * Decode a graph-ts `SmartContractCall` ptr into the JS pieces the
+   * RPC needs. Layout (5 ptr fields, 4 bytes each):
+   *
+   *   +0  contractName       string
+   *   +4  contractAddress    Address  (Uint8Array of 20)
+   *   +8  functionName       string
+   *   +12 functionSignature  string   (graph-cli compact form)
+   *   +16 functionParams     Array<ethereum.Value>
+   */
+  function decodeSmartContractCall(rt: HostRuntime, callPtr: number): {
+    address: Uint8Array;
+    signature: string;
+    paramPtrs: number[];
+  } {
+    const u32 = new Uint32Array(rt.memory.buffer);
+    const addressPtr = u32[(callPtr + 4) >>> 2];
+    const signaturePtr = u32[(callPtr + 12) >>> 2];
+    const paramsArrayPtr = u32[(callPtr + 16) >>> 2];
+    return {
+      address: readUint8Array(rt, addressPtr),
+      signature: readAsString(rt.memory, signaturePtr),
+      paramPtrs:
+        paramsArrayPtr === 0 ? [] : rt.exports.__getArray(paramsArrayPtr),
+    };
+  }
+
+  /**
+   * Async core of `ethereum.call`: decode the wasm call descriptor,
+   * ABI-encode args, hit the RPC, decode return data, allocate an
+   * `Array<ethereum.Value>` mirroring the function's outputs.
+   *
+   * Returns `0` on revert (graph-ts treats `null` Array<Value> as
+   * `CallResult.reverted = true`).
+   */
+  async function ethereumCallImpl(callPtr: number): Promise<number> {
+    const rt = requireRuntime();
+    const builder = hostBuilder;
+    if (builder === null) {
+      // wireRuntime always builds one before returning; reachable
+      // only if a misbehaving caller invoked the import outside the
+      // normal handler dispatch path.
+      throw new Error(
+        "wasm-runner: ethereum.call invoked before EventBuilder was wired",
+      );
+    }
+    const { address, signature, paramPtrs } = decodeSmartContractCall(
+      rt,
+      callPtr,
+    );
+    const parsed = parseGraphSignature(signature);
+    if (parsed.inputs.length !== paramPtrs.length) {
+      throw new Error(
+        `ethereum.call: signature "${signature}" expects ${parsed.inputs.length} args, wasm passed ${paramPtrs.length}`,
+      );
+    }
+    const args = parsed.inputs.map((p, i) =>
+      ethereumValueToJs(rt.exports, paramPtrs[i], p.type),
+    );
+    const calldata = encodeCalldata(parsed, args);
+    const to = ("0x" +
+      Array.from(address, (b) => b.toString(16).padStart(2, "0")).join(
+        "",
+      )) as Hex;
+
+    const captureEntry: CapturedEthCall = {
+      contractAddress: to,
+      functionSignature: signature,
+      data: calldata,
+      resultHex: null,
+    };
+    captured.ethCalls.push(captureEntry);
+
+    // host.rpcClient is checked by the sync wrapper before we
+    // unwind, but re-check here for type narrowing and to defend
+    // against a caller mutating it mid-call.
+    if (host.rpcClient === null) return 0;
+    const blockNumber = host.blockNumber;
+    const returnHex = await host.rpcClient.call({
+      to,
+      data: calldata,
+      ...(blockNumber === null ? {} : { blockNumber }),
+    });
+    // RpcClient contract: `null` = on-chain revert; rejection =
+    // infrastructure error. We deliberately do NOT swallow rejections
+    // here — let them surface via the asyncify-aware promise chain
+    // so the user sees a real stack trace instead of a silent revert.
+    if (returnHex === null) return 0;
+    captureEntry.resultHex = returnHex;
+
+    const decoded = decodeReturnData(parsed, returnHex);
+    const valuePtrs = parsed.outputs.map((out, i) =>
+      jsToValuePtr(builder, decoded[i], out.type),
+    );
+    return builder.array(valuePtrs);
+  }
+
+  /**
+   * Sync entry-point the wasm sees. When no RPC is configured, mirror
+   * the previous "always reverted" behavior so existing tests still
+   * pass without paying the asyncify unwind cost. With an RPC, defer
+   * to the asyncify-wrapped async path.
+   */
+  function ethereumCall(callPtr: number): number {
+    if (host.rpcClient === null) return 0;
+    if (ethereumCallAsync === null) {
+      throw new Error(
+        "wasm-runner: ethereum.call invoked before wireRuntime() bound asyncify",
+      );
+    }
+    return ethereumCallAsync(callPtr);
+  }
+
   const trap =
     (importName: string): ((...args: unknown[]) => never) =>
     () => {
@@ -413,12 +652,11 @@ export function createHost(): Host {
       ),
     },
     ethereum: {
-      // Always return null (= reverted in graph-ts `try_*` calls). Real
-      // RPC-backed `eth_call` is out of scope for the JS host today;
-      // when a test needs a non-revert response it should wire it
-      // through a future `host.mockContractCall(addr, sig, ...)` hook,
-      // mirroring matchstick's `createMockedFunction(...)`.
-      "ethereum.call": () => 0,
+      // Returns 0 (= reverted) when no `host.rpcClient` is configured;
+      // otherwise hits the configured RPC (potentially async). The
+      // async path is wrapped via `asyncify.wrapAsyncImport` at
+      // `wireRuntime` time so the wasm caller stays sync.
+      "ethereum.call": ethereumCall,
       "ethereum.getBalance": trap("ethereum.ethereum.getBalance"),
       "ethereum.hasCode": trap("ethereum.ethereum.hasCode"),
       "ethereum.encode": trap("ethereum.ethereum.encode"),
@@ -452,7 +690,7 @@ export function createHost(): Host {
       "store.get_in_block": trap("index.store.get_in_block"),
       "store.loadRelated": trap("index.store.loadRelated"),
       "log.log": logLog,
-      "crypto.keccak256": trap("index.crypto.keccak256"),
+      "crypto.keccak256": cryptoKeccak256,
       "ipfs.cat": trap("index.ipfs.cat"),
       "ipfs.map": trap("index.ipfs.map"),
       "ens.nameByHash": trap("index.ens.nameByHash"),
@@ -479,11 +717,22 @@ export function createHost(): Host {
     },
     dataSourceAddress: "0".repeat(40),
     dataSourceNetwork: "mainnet",
+    rpcClient: null,
+    blockNumber: null,
     wireRuntime(rt) {
       runtime = rt;
       // Invalidate the cached address ptr — `reset()` rebuilds the
       // wasm and we must re-allocate against the new heap.
       dataSourceAddressPtr = 0;
+      // Build a fresh EventBuilder against the new instance — host
+      // imports (today: ethereum.call) need it to allocate return
+      // values. Cheap (just looks up RTTI ids).
+      hostBuilder = new EventBuilder(rt.exports);
+      // Bind the asyncify wrapper now that we have an instance to
+      // suspend. Placeholder return value `0` is what the wasm
+      // observes during the unwind step; the real result replaces
+      // it on rewind.
+      ethereumCallAsync = rt.asyncify.wrapAsyncImport(ethereumCallImpl, 0);
     },
   };
   return host;

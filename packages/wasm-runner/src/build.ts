@@ -29,10 +29,29 @@
  *   --debug           keeps `env.abort` arguments wired so JS errors
  *                     report AS file/line.
  */
-import * as asc from "assemblyscript/cli/asc";
+// `assemblyscript/cli/asc` is loaded lazily inside `buildBundle()` —
+// see the comment block in that function. Importing it at module
+// load time would trigger asc's `dynrequire("../package.json")` chain
+// and break under runtimes that have a global ESM loader hook
+// installed (e.g. Hardhat 3 via tsx). Keeping it dynamic means
+// `import { Subgraph } from "wasm-runner"` is safe in those
+// environments — only callers that actually want to compile pay the
+// asc-evaluation cost.
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
+
+/**
+ * Subset of the AssemblyScript CLI surface we use.
+ */
+interface AsmCli {
+  ready: Promise<void>;
+  main: (
+    args: string[],
+    io: { stdout: NodeJS.WritableStream; stderr: NodeJS.WritableStream },
+    cb: (err: Error | null) => number,
+  ) => void;
+}
 
 /**
  * Input for `buildBundle`. `handlerEntry` must be an absolute path (or
@@ -171,6 +190,12 @@ export async function buildBundle(opts: BuildBundleOptions): Promise<void> {
     "--optimize",
   ];
   if (opts.debug !== false) args.push("--debug");
+
+  // Defer the asc import to call-time. See the import-block comment
+  // for why this matters; the cost is one module evaluation on first
+  // build, which is dwarfed by `asc.ready` (the binaryen WASM warmup)
+  // and the actual compile.
+  const asc = (await import("assemblyscript/cli/asc")) as unknown as AsmCli;
 
   // `asc.ready` lazily compiles the binaryen WebAssembly module that
   // backs the optimizer. Awaited once per process by the first call.

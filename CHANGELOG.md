@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.4.1 — 2026-07-01
+
+### `matchstick-ts`
+
+- **Solidity tuple / struct event params now decode end-to-end.** Previously,
+  struct params (e.g. `ConfigUpdated(Config)`) broke on both sides of the wire:
+  `serializeParams` called `JSON.stringify` on the object and threw on any
+  `bigint` field (every `uint256`), and the assembly runtime fell back to a
+  string, so the generated event class's `.toTuple()` aborted with "Ethereum
+  value is not a tuple".
+  - TS side: `serializeParams` now recursively encodes tuples/arrays as nested
+    JSON arrays (`bigint`s stringified) instead of `JSON.stringify`.
+  - AS side: `jsonValueToEthereumValue` decodes `JSONValueKind.ARRAY` into an
+    `ethereum.Tuple`, so struct params round-trip correctly.
+  - This lands the fix that downstream indexers previously applied via a
+    `postinstall` monkey-patch — that patch can now be removed.
+- The example subgraph gained a `ConfigUpdated(Config)` struct event with unit,
+  synthetic, and on-chain e2e test coverage for the tuple path.
+
+### Packaging
+
+- `pnpm-workspace.yaml` now approves `esbuild`'s build script via `allowBuilds`
+  so installs (and git-hosted `prepare`) succeed under pnpm v11's stricter
+  build-script policy.
+
 ## 0.4.0 — 2026-05-21
 
 ### `matchstick-ts`

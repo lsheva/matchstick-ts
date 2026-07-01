@@ -123,7 +123,17 @@ function jsonValueToEthereumValue(value: JSONValue): ethereum.Value {
   if (value.kind == JSONValueKind.BOOL) {
     return ethereum.Value.fromBoolean(value.toBool());
   }
-  // Arrays/objects fall back to string representation.
+  if (value.kind == JSONValueKind.ARRAY) {
+    // Treated as a Solidity tuple (struct). The TS-side serializer encodes
+    // both tuples and dynamic arrays as JSON arrays — the AS-generated event
+    // class then calls .toTuple() on the wrapper to get the struct back.
+    const arr = value.toArray();
+    const tuple = new ethereum.Tuple();
+    for (let i = 0; i < arr.length; i++) {
+      tuple.push(jsonValueToEthereumValue(arr[i]));
+    }
+    return ethereum.Value.fromTuple(tuple);
+  }
   return ethereum.Value.fromString(value.toString());
 }
 

@@ -14,6 +14,8 @@ dataSources:
       language: wasm/assemblyscript
       entities:
         - Counter
+        - SignedCounter
+        - Config
       abis:
         - name: Counter
           file: ./abis/Counter.json
@@ -22,4 +24,6 @@ dataSources:
           handler: handleValueSet
         - event: SignedValueSet(int256)
           handler: handleSignedValueSet
+        - event: ConfigUpdated((uint256,int256,address,bool))
+          handler: handleConfigUpdated
       file: ./src/mapping.ts

@@ -10,6 +10,7 @@ import {
   COUNTER_ADDRESS,
   valueSetCaptured,
   signedValueSetCaptured,
+  configUpdatedCaptured,
 } from "./helpers.ts";
 
 describe("synthetic ValueSet → Counter entity", () => {
@@ -120,5 +121,36 @@ describe("negative int256 parameter (SignedValueSet)", () => {
     const [counter] = snap.saved("SignedCounter");
     assert.ok(counter);
     assert.equal(counter.value, large.toString());
+  });
+});
+
+describe("struct/tuple parameter (ConfigUpdated)", () => {
+  const TREASURY = "0x00000000000000000000000000000000DeaDBeef";
+
+  it("decodes a Config struct (uint256, int256, address, bool) into an entity", async () => {
+    const snap = await runMatchstickTest({
+      events: [
+        configUpdatedCaptured({ fee: 500n, offset: -25n, treasury: TREASURY, active: true }),
+      ],
+      reads: [{ entityType: "Config", id: "0" }],
+    });
+
+    assert.equal(snap.get("Config", "0", "fee"), "500");
+    assert.equal(snap.get("Config", "0", "offset"), "-25");
+    assert.equal(snap.get("Config", "0", "treasury"), TREASURY.toLowerCase());
+    assert.equal(snap.get("Config", "0", "active"), true);
+  });
+
+  it("preserves uint256 precision far beyond Number range", async () => {
+    const bigFee = 123456789012345678901234567890n;
+    const snap = await runMatchstickTest({
+      events: [
+        configUpdatedCaptured({ fee: bigFee, offset: 0n, treasury: TREASURY, active: false }),
+      ],
+      reads: [{ entityType: "Config", id: "0" }],
+    });
+
+    assert.equal(snap.get("Config", "0", "fee"), bigFee.toString());
+    assert.equal(snap.get("Config", "0", "active"), false);
   });
 });

@@ -38,10 +38,13 @@ export interface ReceiptAwaitingClient {
  *   `event.parameters[i]` positionally).
  * - `value` is the native JSON representation: `bigint` and large numbers are
  *   stringified (JSON has no bigint), booleans stay booleans, hex strings stay
- *   strings, tuples/arrays/structs are JSON-stringified. The AS side recovers
- *   the Ethereum kind heuristically (see `jsonValueToEthereumValue`).
+ *   strings. Tuples (structs) and dynamic arrays are encoded as nested JSON
+ *   arrays (see {@link encodeTupleOrArray}) — the AS side calls `.toTuple()` on
+ *   the wrapper to recover the struct. The AS side recovers the Ethereum kind
+ *   heuristically (see `jsonValueToEthereumValue`).
  */
-export type ParamEntry = [name: string, value: string | number | boolean];
+export type EncodedParamValue = string | number | boolean | EncodedParamValue[];
+export type ParamEntry = [name: string, value: EncodedParamValue];
 
 export interface CapturedEvent {
   event: string;
@@ -296,6 +299,24 @@ export class EventCapture {
   }
 }
 
+/**
+ * Recursively encode a tuple (struct) or dynamic array into a JSON-array shape
+ * the AS side can rebuild into an `ethereum.Tuple` / array.
+ *
+ * `JSON.stringify` can't be used here because struct fields routinely contain
+ * `bigint` values (every `uint256`), which `JSON.stringify` throws on. Objects
+ * are flattened to their values in declaration order (matching positional ABI
+ * tuple decoding); bigints are stringified; scalars pass through unchanged.
+ */
+function encodeTupleOrArray(v: unknown): EncodedParamValue {
+  if (typeof v === "bigint") return v.toString();
+  if (Array.isArray(v)) return v.map(encodeTupleOrArray);
+  if (v !== null && typeof v === "object") {
+    return Object.values(v as Record<string, unknown>).map(encodeTupleOrArray);
+  }
+  return v as EncodedParamValue;
+}
+
 /** Internal — shared by {@link EventCapture} and the log-sync ingester. */
 export function serializeParams(args: unknown): ParamEntry[] {
   if (args === null || typeof args !== "object") return [];
@@ -311,7 +332,7 @@ export function serializeParams(args: unknown): ParamEntry[] {
     } else if (typeof value === "string" && value.startsWith("0x")) {
       result.push([key, value.toLowerCase()]);
     } else if (typeof value === "object" && value !== null) {
-      result.push([key, JSON.stringify(value)]);
+      result.push([key, encodeTupleOrArray(value)]);
     } else {
       result.push([key, String(value)]);
     }

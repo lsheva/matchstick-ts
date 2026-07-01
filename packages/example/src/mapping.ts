@@ -1,6 +1,11 @@
 import { BigInt } from "@graphprotocol/graph-ts";
-import { Counter as CounterContract, ValueSet, SignedValueSet } from "../generated/Counter/Counter";
-import { Counter, SignedCounter } from "../generated/schema";
+import {
+  Counter as CounterContract,
+  ValueSet,
+  SignedValueSet,
+  ConfigUpdated,
+} from "../generated/Counter/Counter";
+import { Counter, SignedCounter, Config } from "../generated/schema";
 
 export function handleValueSet(event: ValueSet): void {
   let entity = Counter.load("0");
@@ -27,5 +32,21 @@ export function handleSignedValueSet(event: SignedValueSet): void {
     entity = new SignedCounter("0");
   }
   entity.value = event.params.newValue;
+  entity.save();
+}
+
+// Reads fields off a decoded struct param. `event.params.config` calls
+// `.toTuple()` on the underlying value, which only works if the assembly
+// runtime decoded the JSON-array wire form into an `ethereum.Tuple`.
+export function handleConfigUpdated(event: ConfigUpdated): void {
+  let entity = Config.load("0");
+  if (entity == null) {
+    entity = new Config("0");
+  }
+  const config = event.params.config;
+  entity.fee = config.fee;
+  entity.offset = config.offset;
+  entity.treasury = config.treasury;
+  entity.active = config.active;
   entity.save();
 }

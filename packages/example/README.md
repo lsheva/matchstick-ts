@@ -13,6 +13,7 @@ hardhat.config.ts         # hardhat-matchstick-ts plugin + matchstick { … }
 integration/                  # `hardhat test nodejs` (not Matchstick)
   synthetic-events.test.ts   # fast — hand-built events, no chain
   hardhat-e2e.test.ts         # full — `network.create()` + conn.matchstick
+  wasm-runner-api.test.ts    # tour of the wasm-runner Subgraph API
   helpers.ts
 tests/                        # Matchstick-generated (gitignored)
   runner.test.ts
@@ -49,6 +50,8 @@ pnpm test
 | --- | --- |
 | `integration/synthetic-events.test.ts` | `runMatchstickTest`, `readsFor`, snapshot null/undefined semantics |
 | `integration/hardhat-e2e.test.ts` | `network.getOrCreate()`, `conn.matchstick` (`bind`, `anchor`, `index`) |
+| `integration/wasm-runner-api.test.ts` | `wasm-runner` `Subgraph` facade — `create`, `fire`, `mockCall`, `start`/`pause`/`resume`/`stop`, `entity`/`entities`/`snapshot`, `reset`, `loadSubgraphYaml`, `host`/`exports` escape hatches |
+| `integration/wasm-runner-hardhat.test.ts` | `wasm-runner` against a real Hardhat network — viem `PublicClient` adapted via `makeViemRpc` + `makeViemLogSource`, real `eth_call` round-trips, range + tail mode |
 
 Generated at runtime (gitignored): `tests/runner.test.ts`, `tests/.tmp/entities.d.ts`.
 

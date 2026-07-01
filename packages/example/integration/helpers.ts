@@ -56,3 +56,31 @@ export function signedValueSetCaptured(newValue: bigint, blockNumber = 1): Captu
     params: [["newValue", newValue.toString()]],
   };
 }
+
+export interface ConfigInput {
+  fee: bigint;
+  offset: bigint;
+  treasury: Hex;
+  active: boolean;
+}
+
+/**
+ * Build a serialized `ConfigUpdated(Config)` event. The struct is encoded as a
+ * JSON array (matching `serializeParams`' tuple wire form), exercising the
+ * `JSONValueKind.ARRAY` → `ethereum.Value.fromTuple` branch of the assembly
+ * runtime plus the generated event class's `.toTuple()` accessor.
+ */
+export function configUpdatedCaptured(config: ConfigInput, blockNumber = 1): CapturedEvent {
+  return {
+    event: "ConfigUpdated",
+    address: COUNTER_ADDRESS,
+    blockNumber,
+    transactionHash: TX_HASH,
+    params: [
+      [
+        "config",
+        [config.fee.toString(), config.offset.toString(), config.treasury.toLowerCase(), config.active],
+      ],
+    ],
+  };
+}

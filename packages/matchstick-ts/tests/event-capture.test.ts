@@ -1,6 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { encodeEventTopics, encodeAbiParameters, type Abi, type Address, type Hex } from "viem";
+import {
+  encodeEventTopics,
+  encodeAbiParameters,
+  getAddress,
+  type Abi,
+  type Address,
+  type Hex,
+} from "viem";
 import {
   captureViewMocksFromContract,
   EventCapture,
@@ -89,6 +96,86 @@ describe("EventCapture.captureFromReceipt", () => {
 
     assert.equal(captured.length, 1);
     assert.equal(captured[0].logIndex, 0);
+  });
+});
+
+const configAbi = [
+  {
+    anonymous: false,
+    inputs: [
+      {
+        indexed: false,
+        name: "config",
+        type: "tuple",
+        components: [
+          { name: "fee", type: "uint256" },
+          { name: "offset", type: "int256" },
+          { name: "treasury", type: "address" },
+          { name: "active", type: "bool" },
+        ],
+      },
+    ],
+    name: "ConfigUpdated",
+    type: "event",
+  },
+] as const satisfies Abi;
+
+describe("EventCapture — struct/tuple params", () => {
+  const TREASURY = getAddress("0x00000000000000000000000000000000deadbeef");
+
+  it("encodes a struct (with a bigint field) as a nested array, not a JSON string", async () => {
+    const data = encodeAbiParameters(
+      [
+        {
+          type: "tuple",
+          components: [
+            { name: "fee", type: "uint256" },
+            { name: "offset", type: "int256" },
+            { name: "treasury", type: "address" },
+            { name: "active", type: "bool" },
+          ],
+        },
+      ],
+      [{ fee: 500n, offset: -25n, treasury: TREASURY, active: true }],
+    );
+    const topics = encodeEventTopics({ abi: configAbi, eventName: "ConfigUpdated" }) as Hex[];
+
+    const client: ReceiptAwaitingClient = {
+      waitForTransactionReceipt: async () => ({
+        logs: [
+          {
+            address: contractAddress,
+            topics,
+            data,
+            logIndex: 0,
+            blockNumber: 7n,
+            transactionHash:
+              "0x3333333333333333333333333333333333333333333333333333333333333333" as Hex,
+          },
+        ],
+        blockNumber: 7n,
+        transactionHash:
+          "0x3333333333333333333333333333333333333333333333333333333333333333" as Hex,
+      }),
+    };
+
+    const capture = new EventCapture(client);
+    // Regression guard: the old code did `JSON.stringify(value)` on struct
+    // params, which throws `TypeError: Do not know how to serialize a BigInt`.
+    const captured = await capture.captureFromReceipt(
+      "0x3333333333333333333333333333333333333333333333333333333333333333" as Hex,
+      configAbi,
+    );
+
+    assert.equal(captured.length, 1);
+    const [name, value] = captured[0].params[0];
+    assert.equal(name, "config");
+    assert.ok(Array.isArray(value), "struct param must serialize to a nested array");
+    const [fee, offset, treasury, active] = value as [string, string, string, boolean];
+    assert.equal(fee, "500");
+    assert.equal(offset, "-25");
+    assert.equal((treasury as string).toLowerCase(), TREASURY.toLowerCase());
+    assert.equal(active, true);
   });
 });
 

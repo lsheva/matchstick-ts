@@ -11,6 +11,19 @@ pragma solidity ^0.8.28;
 /// `reverted = true` branch.
 contract Counter {
   event ValueSet(uint256 newValue);
+  event SignedValueSet(int256 newValue);
+
+  /// A struct event param. Emitting this exercises matchstick-ts's tuple/struct
+  /// wire format end-to-end: a `uint256` (bigint), a negative `int256`, an
+  /// `address`, and a `bool` all packed into one ABI tuple.
+  struct Config {
+    uint256 fee;
+    int256 offset;
+    address treasury;
+    bool active;
+  }
+
+  event ConfigUpdated(Config config);
 
   uint256 public immutable multiplier;
 
@@ -20,5 +33,13 @@ contract Counter {
 
   function setValue(uint256 newValue) external {
     emit ValueSet(newValue);
+  }
+
+  function setSignedValue(int256 newValue) external {
+    emit SignedValueSet(newValue);
+  }
+
+  function setConfig(Config calldata config) external {
+    emit ConfigUpdated(config);
   }
 }

@@ -16,6 +16,9 @@ importers:
       matchstick-ts:
         specifier: workspace:*
         version: link:../matchstick-ts
+      wasm-runner:
+        specifier: workspace:*
+        version: link:../wasm-runner
     devDependencies:
       '@graphprotocol/graph-cli':
         specifier: ^0.98.1
@@ -109,6 +112,12 @@ importers:
       '@assemblyscript/loader':
         specifier: 0.19.23
         version: 0.19.23
+      viem:
+        specifier: ^2.49.3
+        version: 2.49.3(typescript@5.9.3)(zod@3.25.76)
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
     devDependencies:
       '@graphprotocol/graph-ts':
         specifier: 0.37.0
@@ -119,6 +128,9 @@ importers:
       assemblyscript:
         specifier: 0.19.23
         version: 0.19.23
+      binaryen:
+        specifier: ^129.0.0
+        version: 129.0.0
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
@@ -869,6 +881,10 @@ packages:
 
   binaryen@116.0.0-nightly.20240114:
     resolution: {integrity: sha512-0GZrojJnuhoe+hiwji7QFaL3tBlJoA+KFUN7ouYSDGZLSo9CKM8swQX8n/UcbR0d1VuZKU+nhogNzv423JEu5A==}
+    hasBin: true
+
+  binaryen@129.0.0:
+    resolution: {integrity: sha512-NyF5J0SfRoLDthpPh36FGTycOEv3Eqnkq3+mP5Cqt6iD9BLGGJMEVuPzu81nhLy2MMpPKmRTM9VLZihfyRQv8A==}
     hasBin: true
 
   bl@1.2.3:
@@ -3110,6 +3126,8 @@ snapshots:
   binaryen@102.0.0-nightly.20211028: {}
 
   binaryen@116.0.0-nightly.20240114: {}
+
+  binaryen@129.0.0: {}
 
   bl@1.2.3:
     dependencies:

@@ -1,2 +1,10 @@
 packages:
   - "packages/*"
+
+# esbuild ships prebuilt binaries via a postinstall build script. pnpm v11
+# blocks build scripts by default, and when this monorepo is consumed as a
+# git-hosted dependency its `prepare` runs a nested `pnpm install` that treats
+# ignored builds as a hard error (ERR_PNPM_IGNORED_BUILDS). Approve it here so
+# both standalone installs and git-dep preparation succeed.
+allowBuilds:
+  esbuild: true

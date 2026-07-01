@@ -61,7 +61,44 @@ export type EthValueKind = (typeof EthValueKind)[keyof typeof EthValueKind];
 export interface EventBuilderExports extends InstanceExports {
   __newString: (str: string) => number;
   newMockEvent: (paramsPtr: number) => number;
+  /** Test-driver export: build an `ethereum.Block` with custom core fields. */
+  newCoreBlock?: (
+    numberPtr: number,
+    timestampPtr: number,
+    hashPtr: number,
+  ) => number;
+  /**
+   * Test-driver export: like `newMockEvent` but accepts a pre-built
+   * block, optional transaction hash ptr, optional logIndex ptr.
+   * Pass `0` for the txHash / logIndex args to keep defaults.
+   */
+  newMockEventWithBlock?: (
+    paramsPtr: number,
+    blockPtr: number,
+    transactionHashPtr: number,
+    logIndexPtr: number,
+    addressPtr: number,
+  ) => number;
   id_of_type: (graphNodeTypeId: number) => number;
+}
+
+/**
+ * Per-event runtime context the caller can override on top of the
+ * scaffold's defaults. Today only block fields + transaction hash +
+ * logIndex are exposed — every other `ethereum.Block` /
+ * `ethereum.Transaction` field falls back to the scaffold defaults
+ * (the constants in `assembly/scaffold.ts`).
+ */
+export interface EventContext {
+  /** Override `event.address` (the contract that emitted the log). */
+  address?: string | Uint8Array;
+  block?: {
+    number?: bigint;
+    timestamp?: bigint;
+    hash?: string | Uint8Array;
+  };
+  transactionHash?: string | Uint8Array;
+  logIndex?: bigint;
 }
 
 /**
@@ -105,14 +142,16 @@ export class EventBuilder {
   private readonly cidEventParam: number;
   /** asc RTTI class id for `Array<ethereum.EventParam>`. */
   private readonly cidArrayEventParam: number;
+  /** asc RTTI class id for `Array<ethereum.Value>`. */
+  private readonly cidArrayEthereumValue: number;
 
   constructor(exports: InstanceExports) {
     const ext = exports as EventBuilderExports;
-    if (typeof ext.newMockEvent !== "function") {
-      throw new Error(
-        "EventBuilder: wasm is missing the `newMockEvent(paramsPtr)` export — only the wasm-runner test-driver bundle exposes the default Block/Transaction scaffolding for now",
-      );
-    }
+    // `newMockEvent` is only required by `buildEvent()` (the
+    // test-driver bundle exposes it). Other entry points — `address`,
+    // `unsignedBigInt`, `array`, ... — work against any subgraph wasm,
+    // so the host shim's `ethereum.call` allocator path doesn't need
+    // to fail at construction time on a production bundle.
     if (typeof ext.id_of_type !== "function") {
       throw new Error(
         "EventBuilder: wasm is missing the `id_of_type` export — needed to translate graph-node `TypeId.*` ids to asc RTTI class ids",
@@ -125,6 +164,9 @@ export class EventBuilder {
     this.cidEventParam = t(exports.TypeId.EventParam.value as number);
     this.cidArrayEventParam = t(
       exports.TypeId.ArrayEventParam.value as number,
+    );
+    this.cidArrayEthereumValue = t(
+      exports.TypeId.ArrayEthereumValue.value as number,
     );
   }
 
@@ -252,14 +294,105 @@ export class EventBuilder {
   }
 
   /**
+   * Allocate an `Array<ethereum.Value>` populated with the given Value
+   * ptrs. Used by `ethereum.call`'s host shim to return the
+   * decoded RPC outputs back to the wasm caller, and by `jsToValuePtr`
+   * for `T[]` ABI types.
+   */
+  array(valuePtrs: readonly number[]): number {
+    return this.exports.__pin(
+      this.exports.__newArray(
+        this.cidArrayEthereumValue,
+        valuePtrs as number[],
+      ),
+    );
+  }
+
+  /**
+   * Allocate an `ethereum.Value` of kind=ARRAY wrapping an
+   * `Array<ethereum.Value>` of the supplied element ptrs. Used by
+   * `jsToValuePtr` for `T[]` ABI types.
+   */
+  arrayValue(valuePtrs: readonly number[]): number {
+    return this.value(EthValueKind.ARRAY, this.array(valuePtrs));
+  }
+
+  /** Like `arrayValue` but tags as FIXED_ARRAY (solidity `T[N]`). */
+  fixedArray(valuePtrs: readonly number[]): number {
+    return this.value(EthValueKind.FIXED_ARRAY, this.array(valuePtrs));
+  }
+
+  /**
    * One-shot: build the params array, wrap it in a default
    * `ethereum.Event` scaffold via the AS export, and return the event
    * pointer. The pointer is suitable for `exports.handleXxx(eventPtr)`
    * (graph-ts subclasses are byte-identical to the base).
    */
-  buildEvent(paramPtrs: readonly number[]): number {
-    return this.exports.newMockEvent(this.params(paramPtrs));
+  buildEvent(paramPtrs: readonly number[], ctx?: EventContext): number {
+    if (typeof this.exports.newMockEvent !== "function") {
+      throw new Error(
+        "EventBuilder.buildEvent: wasm is missing the `newMockEvent(paramsPtr)` export — only the wasm-runner test-driver bundle exposes the default Block/Transaction scaffolding for now",
+      );
+    }
+    const paramsArrayPtr = this.params(paramPtrs);
+    if (!ctx) {
+      return this.exports.newMockEvent(paramsArrayPtr);
+    }
+    if (typeof this.exports.newMockEventWithBlock !== "function") {
+      throw new Error(
+        "EventBuilder.buildEvent: ctx provided but wasm is missing `newMockEventWithBlock` export — rebuild the bundle against the latest scaffold.ts",
+      );
+    }
+    const blockPtr = this.buildBlockPtr(ctx.block);
+    const txHashPtr =
+      ctx.transactionHash === undefined
+        ? 0
+        : this.bytesPayload(toBytes(ctx.transactionHash));
+    const logIndexPtr =
+      ctx.logIndex === undefined ? 0 : this.bigInt(ctx.logIndex);
+    const addressPtr =
+      ctx.address === undefined ? 0 : this.bytesPayload(toBytes(ctx.address));
+    return this.exports.newMockEventWithBlock(
+      paramsArrayPtr,
+      blockPtr,
+      txHashPtr,
+      logIndexPtr,
+      addressPtr,
+    );
   }
+
+  /**
+   * Allocate an `ethereum.Block` with the given core fields. Falls
+   * back to the scaffold's `defaultBlock()` for fields not specified.
+   * Returns `0` if `block` is undefined or empty so callers can use
+   * the result as an optional ptr.
+   */
+  private buildBlockPtr(block: EventContext["block"]): number {
+    if (!block || (block.number === undefined && block.timestamp === undefined && block.hash === undefined)) {
+      return 0;
+    }
+    if (typeof this.exports.newCoreBlock !== "function") {
+      throw new Error(
+        "EventBuilder.buildEvent: block override provided but wasm is missing `newCoreBlock` export — rebuild the bundle against the latest scaffold.ts",
+      );
+    }
+    // Defaults mirror scaffold's `defaultBlock()`. Match-stick parity:
+    // missing fields don't fall through to "0", they fall through to
+    // the scaffold's constant (`BigInt(1)` for number/timestamp,
+    // `DEFAULT_ADDRESS_BYTES` for hash).
+    const numberPtr = this.bigInt(block.number ?? 1n);
+    const timestampPtr = this.bigInt(block.timestamp ?? 1n);
+    const hashPtr = this.bytesPayload(
+      block.hash === undefined
+        ? hexToBytes("a16081f360e3847006db660bae1c6d1b2e17ec2a")
+        : toBytes(block.hash),
+    );
+    return this.exports.newCoreBlock(numberPtr, timestampPtr, hashPtr);
+  }
+}
+
+function toBytes(value: string | Uint8Array): Uint8Array {
+  return typeof value === "string" ? hexToBytes(value) : value;
 }
 
 /**

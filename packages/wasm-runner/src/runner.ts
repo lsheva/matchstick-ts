@@ -21,6 +21,7 @@ import { readFile } from "node:fs/promises";
 import { instantiate as loaderInstantiate } from "@assemblyscript/loader";
 import { createHost, type Host } from "./host.ts";
 import { SubgraphInstance } from "./subgraph.ts";
+import { Asyncify, applyAsyncifyTransform } from "./asyncify.ts";
 
 /**
  * The minimum AS runtime + graph-ts surface the runner relies on. The
@@ -52,6 +53,14 @@ export interface InstanceExports extends Record<string, unknown> {
   // otherwise graph-ts globals stay uninitialized and the wasm corrupts
   // its own data section after a handful of allocations.
   _start: () => void;
+  // Asyncify-injected exports (added by `applyAsyncifyTransform` —
+  // see `asyncify.ts`). Used by the JS-side `Asyncify` runtime to
+  // suspend / resume the wasm stack across async host imports.
+  asyncify_start_unwind: (dataPtr: number) => void;
+  asyncify_stop_unwind: () => void;
+  asyncify_start_rewind: (dataPtr: number) => void;
+  asyncify_stop_rewind: () => void;
+  asyncify_get_state: () => number;
 }
 
 export class WasmRunner {
@@ -73,13 +82,32 @@ export class WasmRunner {
    * caching the compiled module across `instantiate()` calls isn't
    * worth the extra wiring today.
    */
-  static async compile(path: string): Promise<WasmRunner> {
-    const buf = await readFile(path);
-    // Copy into a plain ArrayBuffer for the same `BufferSource` typing
-    // reasons as `inspectWasm`.
-    const ab = new ArrayBuffer(buf.byteLength);
-    new Uint8Array(ab).set(buf);
-    return new WasmRunner(path, new Uint8Array(ab));
+  /**
+   * Build a `WasmRunner` from a wasm file path or pre-loaded bytes.
+   * Bytes are useful for the high-level `Subgraph.create({...})`
+   * path which may compile a bundle in-memory; the path form keeps
+   * existing test harnesses simple.
+   */
+  static async compile(source: string | Uint8Array): Promise<WasmRunner> {
+    let bytes: Uint8Array;
+    let label: string;
+    if (typeof source === "string") {
+      const buf = await readFile(source);
+      const ab = new ArrayBuffer(buf.byteLength);
+      new Uint8Array(ab).set(buf);
+      bytes = new Uint8Array(ab);
+      label = source;
+    } else {
+      bytes = source;
+      label = "<bytes>";
+    }
+    // Apply asyncify pass once at compile time — adds the
+    // suspend/resume bookkeeping needed for any future async host
+    // imports (e.g. real `ethereum.call` over RPC). The transform
+    // is a no-op for executions that never trigger an unwind, so
+    // existing sync test paths keep behaving identically.
+    const transformed = applyAsyncifyTransform(bytes);
+    return new WasmRunner(label, transformed);
   }
 
   /**
@@ -90,8 +118,8 @@ export class WasmRunner {
    */
   async instantiate(): Promise<SubgraphInstance> {
     const factory = () => this.buildInstance();
-    const { exports, host } = await factory();
-    return new SubgraphInstance(factory, exports, host);
+    const { exports, host, asyncify } = await factory();
+    return new SubgraphInstance(factory, exports, host, asyncify);
   }
 
   /**
@@ -103,6 +131,7 @@ export class WasmRunner {
   private async buildInstance(): Promise<{
     exports: InstanceExports;
     host: Host;
+    asyncify: Asyncify;
   }> {
     const host = createHost();
     const { exports } = await loaderInstantiate<InstanceExports>(
@@ -131,16 +160,23 @@ export class WasmRunner {
     }
     const ascUint8ArrayId = idOfType(typeIdUint8ArrayGlobal.value as number);
 
+    // Wire the host with a fresh (uninitialized) asyncify. Host
+    // closures capture `asyncify` by reference; calling
+    // `asyncify.init` later populates `exports` / `dataPtr` on the
+    // same object, so the captured closures see the live state when
+    // they're actually invoked. This breaks the ordering cycle
+    // between `_start` (may call host imports) and `asyncify.init`
+    // (needs `__new`, only safe post-`_start`).
+    const asyncify = new Asyncify();
     host.wireRuntime({
       memory: exports.memory,
       newArray: exports.__newArray,
       newString: exports.__newString,
       typeIdUint8Array: ascUint8ArrayId,
+      exports,
+      asyncify,
     });
 
-    // Must run AFTER wireRuntime: AS top-level code may call host imports
-    // (e.g. graph-ts modules that build constants via `BigInt.fromI32`)
-    // and those imports decode string ptrs via the runtime we just wired.
     if (typeof exports._start !== "function") {
       throw new Error(
         "wasm-runner: module is missing `_start` — wasm must be built with `--explicitStart` and `--exportRuntime` (graph-cli defaults)",
@@ -148,6 +184,11 @@ export class WasmRunner {
     }
     exports._start();
 
-    return { exports, host };
+    // Initialize the asyncify runtime AFTER `_start` so the AS heap
+    // allocator is fully set up — `asyncify.init` calls `__new` for
+    // the unwind buffer and that needs a ready heap.
+    asyncify.init(exports);
+
+    return { exports, host, asyncify };
   }
 }

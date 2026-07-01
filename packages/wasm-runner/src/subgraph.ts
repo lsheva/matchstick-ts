@@ -23,16 +23,19 @@
  */
 import type { InstanceExports } from "./runner.ts";
 import type { Host } from "./host.ts";
+import type { Asyncify } from "./asyncify.ts";
 import { decodeEntity, type EntityFields } from "./decode.ts";
 
 /**
  * Factory the `SubgraphInstance` calls on `reset()` to build a fresh
- * `{ exports, host }` pair. The factory is supplied by `WasmRunner` so
- * the subgraph doesn't need to know how compilation works.
+ * `{ exports, host, asyncify }` triple. The factory is supplied by
+ * `WasmRunner` so the subgraph doesn't need to know how compilation
+ * works.
  */
 export type InstanceFactory = () => Promise<{
   exports: InstanceExports;
   host: Host;
+  asyncify: Asyncify;
 }>;
 
 export class SubgraphInstance {
@@ -40,16 +43,41 @@ export class SubgraphInstance {
   exports: InstanceExports;
   /** Host shim — escape hatch for capture buffers, raw store map, etc. */
   host: Host;
+  /**
+   * Asyncify state machine bound to the current wasm instance. Use
+   * `subgraph.run(() => exports.handleX(ptr))` to dispatch a handler
+   * that may suspend on async host imports (Phase 2: `ethereum.call`
+   * over RPC). Direct sync calls via `subgraph.exports.handleX(ptr)`
+   * still work as long as no async import fires during the call.
+   */
+  asyncify: Asyncify;
   private readonly factory: InstanceFactory;
 
   constructor(
     factory: InstanceFactory,
     exports: InstanceExports,
     host: Host,
+    asyncify: Asyncify,
   ) {
     this.factory = factory;
     this.exports = exports;
     this.host = host;
+    this.asyncify = asyncify;
+  }
+
+  /**
+   * Run a wasm-export call, awaiting any async host imports it
+   * triggers under asyncify. For sync-only paths this is just a
+   * Promise-wrapped invocation. The caller is expected to do any
+   * argument allocation (event ptrs, etc) before passing the closure.
+   *
+   * Convention: pass the call as a thunk so we can re-enter it during
+   * asyncify rewind:
+   *
+   *   await subgraph.run(() => subgraph.exports.handleOrderCreated(ptr));
+   */
+  async run<T>(fn: () => T): Promise<T> {
+    return this.asyncify.run(fn);
   }
 
   /**
@@ -86,8 +114,9 @@ export class SubgraphInstance {
    * heap growth.
    */
   async reset(): Promise<void> {
-    const { exports, host } = await this.factory();
+    const { exports, host, asyncify } = await this.factory();
     this.exports = exports;
     this.host = host;
+    this.asyncify = asyncify;
   }
 }

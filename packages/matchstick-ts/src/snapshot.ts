@@ -221,7 +221,10 @@ function printMatchstickOutput(stdout: string, stderr: string): void {
 export function readsFor<
   TEntities = AugmentedEntities,
   K extends EntityKey<TEntities> = EntityKey<TEntities>,
->(entityType: K, ids: readonly string[]): EntityRef<TEntities>[] {
+>(entityType: K, ids: readonly string[]): (EntityRef<TEntities> & { entityType: K })[] {
+  // Preserve the literal `K` on each ref so callers downstream (e.g.
+  // `index`/`indexResultsFromSnapshot`) can resolve `EntityForRef` to
+  // a specific row type instead of the full entity union.
   return ids.map((id) => ({ entityType, id }));
 }
 
@@ -229,7 +232,7 @@ export function readsFor<
 export function read<
   TEntities = AugmentedEntities,
   K extends EntityKey<TEntities> = EntityKey<TEntities>,
->(entityType: K, id: string): EntityRef<TEntities> {
+>(entityType: K, id: string): EntityRef<TEntities> & { entityType: K } {
   return { entityType, id };
 }
 

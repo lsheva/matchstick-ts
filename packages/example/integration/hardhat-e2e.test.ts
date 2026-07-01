@@ -5,6 +5,7 @@
 import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
 import { network } from "hardhat";
+import { getAddress } from "viem";
 import { read } from "matchstick-ts";
 import { deployCounter } from "../src/deploy-counter.ts";
 
@@ -96,5 +97,29 @@ describe("Hardhat → Matchstick → Counter", () => {
     const [entity] = snap.saved("Counter");
     assert.ok(entity);
     assert.equal(entity.value, "7");
+  });
+
+  it("indexes a struct (Config) event captured from real chain logs", async () => {
+    const { counter, abi, address } = await deployCounter(conn);
+    conn.matchstick.reset();
+    conn.matchstick.bind("Counter", address, abi);
+    await conn.matchstick.anchor();
+
+    const wallet = (await conn.viem.getWalletClients())[0];
+    const treasury = getAddress("0x00000000000000000000000000000000deadbeef");
+    // Real emit → viem decodes the struct → serializeParams encodes the tuple
+    // (including the bigint `fee`) → the AS runtime rebuilds it into a tuple.
+    await counter.write.setConfig(
+      [{ fee: 999n, offset: -7n, treasury, active: true }],
+      { account: wallet.account, chain: wallet.chain },
+    );
+
+    const [entity] = await conn.matchstick.index([read("Config", "0")]);
+
+    assert.ok(entity);
+    assert.equal(entity.fee, "999");
+    assert.equal(entity.offset, "-7");
+    assert.equal((entity.treasury as string).toLowerCase(), treasury.toLowerCase());
+    assert.equal(entity.active, true);
   });
 });
