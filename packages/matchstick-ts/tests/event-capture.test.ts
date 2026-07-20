@@ -78,6 +78,49 @@ describe("EventCapture.captureFromReceipt", () => {
     );
   });
 
+  it("propagates blockTimestamp when getBlock is available", async () => {
+    const client: ReceiptAwaitingClient = {
+      waitForTransactionReceipt: async () => ({
+        logs: [makeLog(1n, 0)],
+        blockNumber: 42n,
+        transactionHash:
+          "0x1111111111111111111111111111111111111111111111111111111111111111" as Hex,
+      }),
+      getBlock: async ({ blockNumber }) => {
+        assert.equal(blockNumber, 42n);
+        return { timestamp: 1_700_000_123n };
+      },
+    };
+
+    const capture = new EventCapture(client);
+    const captured = await capture.captureFromReceipt(
+      "0x1111111111111111111111111111111111111111111111111111111111111111" as Hex,
+      counterAbi,
+    );
+
+    assert.equal(captured.length, 1);
+    assert.equal(captured[0].blockTimestamp, 1_700_000_123);
+  });
+
+  it("omits blockTimestamp when getBlock is not provided", async () => {
+    const client: ReceiptAwaitingClient = {
+      waitForTransactionReceipt: async () => ({
+        logs: [makeLog(1n, 0)],
+        blockNumber: 42n,
+        transactionHash:
+          "0x1111111111111111111111111111111111111111111111111111111111111111" as Hex,
+      }),
+    };
+
+    const capture = new EventCapture(client);
+    const captured = await capture.captureFromReceipt(
+      "0x1111111111111111111111111111111111111111111111111111111111111111" as Hex,
+      counterAbi,
+    );
+
+    assert.equal(captured[0].blockTimestamp, undefined);
+  });
+
   it("defaults logIndex to 0 when the underlying log omits it", async () => {
     const client: ReceiptAwaitingClient = {
       waitForTransactionReceipt: async () => ({

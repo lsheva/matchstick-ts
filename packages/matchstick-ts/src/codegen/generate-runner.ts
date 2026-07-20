@@ -79,7 +79,7 @@ export async function generateRunner(options: GenerateRunnerOptions): Promise<vo
       handlersByFile.get(mappingFile)!.add(handlerName);
       eventTypesByAbi.get(abi)!.add(eventName);
       routes.push(`    } else if (eventName == "${eventName}") {
-      ${handlerName}(createMockEvent<${eventName}>(params, txHash, blockNum, logIndex, address));`);
+      ${handlerName}(createMockEvent<${eventName}>(params, txHash, blockNum, logIndex, address, blockTimestamp));`);
     }
   }
 
@@ -161,9 +161,9 @@ test("process events and dump store snapshot", () => {
 
     // Forward receipt-derived fields onto the matchstick mock event so
     // handlers see realistic per-event \`transaction.hash\` / \`block.number\`
-    // / \`logIndex\` / \`address\` instead of the matchstick-as defaults.
-    // Empty strings (when a JSON field is missing) instruct createMockEvent
-    // to leave the matchstick default in place.
+    // / \`block.timestamp\` / \`logIndex\` / \`address\` instead of the
+    // matchstick-as defaults. Empty strings (when a JSON field is missing)
+    // instruct createMockEvent to leave the matchstick default in place.
     let txHash = "";
     const txHashVal = evt.get("transactionHash");
     if (txHashVal != null) {
@@ -186,6 +186,12 @@ test("process events and dump store snapshot", () => {
     const addressVal = evt.get("address");
     if (addressVal != null) {
       address = addressVal.toString();
+    }
+
+    let blockTimestamp = "";
+    const blockTimestampVal = evt.get("blockTimestamp");
+    if (blockTimestampVal != null) {
+      blockTimestamp = blockTimestampVal.toI64().toString();
     }
 
     if (false) {

@@ -33,6 +33,11 @@ export interface LogsQueryingClient {
     fromBlock: bigint;
     toBlock: bigint;
   }): Promise<readonly Log[]>;
+  /**
+   * Resolves `block.timestamp` for ingested logs. Optional so minimal test
+   * doubles keep working; when omitted, events leave `blockTimestamp` unset.
+   */
+  getBlock?(args: { blockNumber: bigint }): Promise<{ timestamp: bigint }>;
 }
 
 export interface DataSourceBinding {
@@ -111,6 +116,30 @@ function decodeLogs(logs: readonly Log[], abi: Abi): CapturedEvent[] {
   });
 
   return captured;
+}
+
+/** Attach `blockTimestamp` for each unique block via `eth_getBlockByNumber`. */
+async function attachBlockTimestamps(
+  events: CapturedEvent[],
+  getBlock: (args: { blockNumber: bigint }) => Promise<{ timestamp: bigint }>,
+): Promise<void> {
+  const unique = new Set<number>();
+  for (const event of events) {
+    unique.add(event.blockNumber);
+  }
+
+  const timestamps = new Map<number, number>();
+  for (const blockNumber of unique) {
+    const block = await getBlock({ blockNumber: BigInt(blockNumber) });
+    timestamps.set(blockNumber, Number(block.timestamp));
+  }
+
+  for (const event of events) {
+    const ts = timestamps.get(event.blockNumber);
+    if (ts !== undefined) {
+      event.blockTimestamp = ts;
+    }
+  }
 }
 
 function sortCaptured(events: CapturedEvent[]): CapturedEvent[] {
@@ -282,6 +311,10 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
       batch.push(...decoded);
     }
 
+    if (this.client.getBlock !== undefined && batch.length > 0) {
+      await attachBlockTimestamps(batch, (args) => this.client.getBlock!(args));
+    }
+
     const before = this.events.length;
     this.events = sortCaptured([...this.events, ...batch]);
     this.syncedBlock = toBlock;
@@ -357,6 +390,10 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
     this.callMocks.clear();
     this.events = [];
     this.syncedBlock = undefined;
+    await cleanupGeneratedFiles({
+      runnerPath: this.runDefaults.runnerPath ?? "tests/runner.test.ts",
+      jsonDir: this.runDefaults.jsonDir ?? DEFAULT_TMP_DIR,
+    });
   }
 
   private resolveBindings(names: readonly AugmentedDataSources[] | undefined): DataSourceBinding[] {

@@ -25,6 +25,7 @@ export default async (): Promise<Partial<NetworkHooks>> => {
               fromBlock: args.fromBlock,
               toBlock: args.toBlock,
             }),
+          getBlock: (args) => publicClient.getBlock({ blockNumber: args.blockNumber }),
         },
         // Forwards `eth_call` so `bind()` can capture realistic return values
         // for handler `try_*` reads (instead of every read seeing a revert).

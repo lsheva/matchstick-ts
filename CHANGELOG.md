@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.4.2 — 2026-07-20
+
+### `matchstick-ts`
+
+- **Forward `block.timestamp` onto mock events.** Capture/ingest now resolves
+  the including block's unix timestamp (via `getBlock`) into
+  `CapturedEvent.blockTimestamp`, and the generated runner assigns it to
+  `event.block.timestamp`. Handlers that branch on time (e.g. expired vs
+  cancelled) now see the same value Graph Node would. Optional for synthetic
+  events / clients without `getBlock` — missing values keep the matchstick
+  default.
+- **`SubgraphLogSync.reset()` actually deletes generated artifacts.** The
+  method previously only cleared in-memory state, leaving `tests/runner.test.ts`
+  and `tests/.tmp` behind so a later `graph test` could pick up the leftover
+  runner. It now calls `cleanupGeneratedFiles` with the configured
+  `runnerPath` / `jsonDir` (honors `KEEP_TEMP=1`).
+
+### `hardhat-matchstick-ts`
+
+- Wires `publicClient.getBlock` into the matchstick indexer client so ingested
+  logs receive `blockTimestamp`.
+
 ## 0.4.1 — 2026-07-01
 
 ### `matchstick-ts`

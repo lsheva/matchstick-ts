@@ -1,6 +1,16 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import type { Abi, Address, Hex, Log } from "viem";
+import { mkdtemp, writeFile, access, mkdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  encodeAbiParameters,
+  encodeEventTopics,
+  type Abi,
+  type Address,
+  type Hex,
+  type Log,
+} from "viem";
 import { SubgraphLogSync, type LogsQueryingClient } from "../src/log-sync.ts";
 
 const counterAbi = [
@@ -52,5 +62,63 @@ describe("SubgraphLogSync", () => {
     assert.equal(anchored, 5n);
     assert.equal(sync.lastSyncedBlock, 5n);
     assert.equal(sync.eventCount, 0);
+  });
+
+  it("attaches blockTimestamp from getBlock during ingest", async () => {
+    const topics = encodeEventTopics({
+      abi: counterAbi,
+      eventName: "ValueSet",
+    }) as Hex[];
+    const data = encodeAbiParameters([{ type: "uint256" }], [7n]);
+    const log = {
+      address,
+      topics,
+      data,
+      blockNumber: 9n,
+      logIndex: 0,
+      transactionHash: `0x${"ab".repeat(32)}` as Hex,
+    } as Log;
+
+    const client: LogsQueryingClient = {
+      getBlockNumber: async () => 9n,
+      getLogs: async () => [log],
+      getBlock: async ({ blockNumber }) => {
+        assert.equal(blockNumber, 9n);
+        return { timestamp: 1_700_000_456n };
+      },
+    };
+
+    const sync = new SubgraphLogSync({ client, startBlock: 0n });
+    sync.bind("Counter", address, counterAbi);
+    await sync.ingest({ toBlock: 9n });
+
+    const events = (
+      sync as unknown as { events: Array<{ blockTimestamp?: number }> }
+    ).events;
+    assert.equal(events.length, 1);
+    assert.equal(events[0].blockTimestamp, 1_700_000_456);
+  });
+
+  it("reset() deletes the generated runner and jsonDir", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ss-reset-"));
+    const runnerPath = join(dir, "runner.test.ts");
+    const jsonDir = join(dir, ".tmp");
+    await mkdir(jsonDir, { recursive: true });
+    await writeFile(runnerPath, "// generated\n");
+    await writeFile(join(jsonDir, "events.json"), "[]");
+
+    const client: LogsQueryingClient = {
+      getBlockNumber: async () => 0n,
+      getLogs: async () => [],
+    };
+
+    const sync = new SubgraphLogSync({
+      client,
+      runDefaults: { runnerPath, jsonDir },
+    });
+    await sync.reset();
+
+    await assert.rejects(() => access(runnerPath), /ENOENT/);
+    await assert.rejects(() => access(jsonDir), /ENOENT/);
   });
 });
