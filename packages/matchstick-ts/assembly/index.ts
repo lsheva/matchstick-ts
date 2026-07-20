@@ -46,6 +46,7 @@ import { newMockEvent } from "matchstick-as/assembly/index";
  * @param blockNumberStr - decimal block number to assign to `event.block.number`
  * @param logIndexStr - decimal log index to assign to `event.logIndex`
  * @param addressHex - "0x..." 20-byte address to assign to `event.address`
+ * @param blockTimestampStr - decimal unix seconds to assign to `event.block.timestamp`
  */
 export function createMockEvent<T extends ethereum.Event>(
   params: JSONValue,
@@ -53,6 +54,7 @@ export function createMockEvent<T extends ethereum.Event>(
   blockNumberStr: string = "",
   logIndexStr: string = "",
   addressHex: string = "",
+  blockTimestampStr: string = "",
 ): T {
   const entries = params.toArray();
   const eventParams: ethereum.EventParam[] = [];
@@ -78,6 +80,9 @@ export function createMockEvent<T extends ethereum.Event>(
   }
   if (addressHex.length > 0) {
     event.address = Address.fromString(addressHex);
+  }
+  if (blockTimestampStr.length > 0) {
+    event.block.timestamp = BigInt.fromString(blockTimestampStr);
   }
 
   return changetype<T>(event);

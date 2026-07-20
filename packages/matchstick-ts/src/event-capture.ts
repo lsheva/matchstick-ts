@@ -29,6 +29,12 @@ export interface ReceiptAwaitingClient {
     blockNumber: bigint;
     transactionHash: Hex;
   }>;
+  /**
+   * Used to resolve `block.timestamp` for the receipt's block. Optional so
+   * minimal test doubles keep working; when omitted, captured events leave
+   * `blockTimestamp` unset and the AS runner keeps matchstick's default.
+   */
+  getBlock?(args: { blockNumber: bigint }): Promise<{ timestamp: bigint }>;
 }
 
 /**
@@ -50,6 +56,15 @@ export interface CapturedEvent {
   event: string;
   address: Address;
   blockNumber: number;
+  /**
+   * Unix timestamp (seconds) of the block that included the log. Forwarded
+   * into `event.block.timestamp` on the mock event so handlers that branch on
+   * time (e.g. expired vs cancelled) see the same value Graph Node would.
+   *
+   * Optional for backward-compat with hand-rolled synthetic events; when
+   * absent the AS runner leaves the matchstick-as default in place.
+   */
+  blockTimestamp?: number;
   /**
    * Position of the log within its block. Mirrors `receipt.logs[i].logIndex` /
    * `eth_getLogs` `logIndex`. Forwarded into `event.logIndex` on the mock
@@ -258,6 +273,12 @@ export class EventCapture {
       abi,
     });
 
+    let blockTimestamp: number | undefined;
+    if (this.publicClient.getBlock !== undefined) {
+      const block = await this.publicClient.getBlock({ blockNumber: receipt.blockNumber });
+      blockTimestamp = Number(block.timestamp);
+    }
+
     const captured: CapturedEvent[] = [];
 
     for (const log of logs) {
@@ -265,6 +286,7 @@ export class EventCapture {
         event: log.eventName,
         address: log.address,
         blockNumber: Number(receipt.blockNumber),
+        ...(blockTimestamp === undefined ? {} : { blockTimestamp }),
         logIndex: typeof log.logIndex === "number" ? log.logIndex : 0,
         transactionHash: receipt.transactionHash,
         params: this.serializeParams(log.args),

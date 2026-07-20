@@ -72,7 +72,7 @@ describe("generateRunner", () => {
     }
   });
 
-  it("forwards per-event transactionHash/blockNumber/logIndex/address into createMockEvent", async () => {
+  it("forwards per-event transactionHash/blockNumber/logIndex/address/blockTimestamp into createMockEvent", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ss-runner-fields-"));
     const outputPath = join(dir, "runner.test.ts");
     try {
@@ -85,9 +85,10 @@ describe("generateRunner", () => {
       assert.match(text, /evt\.get\("transactionHash"\)/);
       assert.match(text, /evt\.get\("blockNumber"\)/);
       assert.match(text, /evt\.get\("logIndex"\)/);
+      assert.match(text, /evt\.get\("blockTimestamp"\)/);
       assert.match(
         text,
-        /createMockEvent<ValueSet>\(params, txHash, blockNum, logIndex, address\)/,
+        /createMockEvent<ValueSet>\(params, txHash, blockNum, logIndex, address, blockTimestamp\)/,
       );
     } finally {
       await rm(dir, { recursive: true, force: true });
