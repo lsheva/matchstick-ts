@@ -58,7 +58,7 @@
     "hardhat": "^3",
     "@nomicfoundation/hardhat-viem": "^3",
     "@nomicfoundation/hardhat-network-helpers": "^3",
-    "matchstick-ts": "^0.4.2"
+    "matchstick-ts": ">=0.4.2 <1.0.0"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-network-helpers": "^3.0.8",
