@@ -59,10 +59,6 @@ importers:
         version: 2.49.3(typescript@5.9.3)(zod@3.25.76)
 
   packages/hardhat-matchstick-ts:
-    dependencies:
-      matchstick-ts:
-        specifier: workspace:^
-        version: link:../matchstick-ts
     devDependencies:
       '@nomicfoundation/hardhat-network-helpers':
         specifier: ^3.0.8
@@ -76,6 +72,9 @@ importers:
       hardhat:
         specifier: ^3.4.0
         version: 3.4.5
+      matchstick-ts:
+        specifier: workspace:*
+        version: link:../matchstick-ts
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
