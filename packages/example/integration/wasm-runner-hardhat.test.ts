@@ -130,18 +130,20 @@ describe("wasm-runner: Hardhat-network end-to-end via Subgraph.start", () => {
       await counter.write.setValue([4n], { account: wallet.account, chain: wallet.chain });
       await counter.write.setValue([9n], { account: wallet.account, chain: wallet.chain });
 
-      // Wait for the run loop to ingest both. `processedBlock` only
-      // ticks at the end of each batch, so polling on entity state
-      // is the most reliable signal.
+      // Wait for the run loop to finish the second event. `handleValueSet`
+      // writes `value` before awaiting `try_multiplier()` and `scaledValue`
+      // after, and `entity()` decodes live from wasm memory — so observing
+      // `value` alone can land mid-handler, with `scaledValue` still from the
+      // previous event. Poll on the last-written field, then assert both off
+      // one decoded snapshot.
       const start = Date.now();
-      while (
-        (subgraph.entity("Counter", "0")?.value !== 9n) &&
-        Date.now() - start < 5000
-      ) {
+      let entity = subgraph.entity("Counter", "0");
+      while (entity?.scaledValue !== 18n && Date.now() - start < 5000) {
         await new Promise((r) => setTimeout(r, 50));
+        entity = subgraph.entity("Counter", "0");
       }
-      assert.equal(subgraph.entity("Counter", "0")?.value, 9n);
-      assert.equal(subgraph.entity("Counter", "0")?.scaledValue, 18n);
+      assert.equal(entity?.value, 9n);
+      assert.equal(entity?.scaledValue, 18n);
     } finally {
       await subgraph.stop();
       await done;
