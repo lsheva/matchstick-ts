@@ -5,7 +5,14 @@
  * Framework-agnostic — takes a viem `PublicClient`, works with Hardhat,
  * anvil, or any other RPC.
  */
-import { parseEventLogs, type Abi, type AbiParameter, type Address, type Hex } from "viem";
+import {
+  parseEventLogs,
+  type Abi,
+  type AbiEvent,
+  type AbiParameter,
+  type Address,
+  type Hex,
+} from "viem";
 
 /**
  * Structural alias for the bit of viem's `PublicClient` we actually use.
@@ -289,7 +296,7 @@ export class EventCapture {
         ...(blockTimestamp === undefined ? {} : { blockTimestamp }),
         logIndex: typeof log.logIndex === "number" ? log.logIndex : 0,
         transactionHash: receipt.transactionHash,
-        params: this.serializeParams(log.args),
+        params: serializeEventArgs(log.args, abi, log.eventName),
       };
       captured.push(event);
       this.events.push(event);
@@ -314,10 +321,6 @@ export class EventCapture {
 
   clear(): void {
     this.events = [];
-  }
-
-  private serializeParams(args: unknown): ParamEntry[] {
-    return serializeParams(args);
   }
 }
 
@@ -360,4 +363,65 @@ export function serializeParams(args: unknown): ParamEntry[] {
     }
   }
   return result;
+}
+
+/**
+ * Serialize a decoded event's args in ABI input order.
+ *
+ * viem's `parseEventLogs` builds named `args` with indexed parameters first and
+ * non-indexed parameters after (see viem's `decodeEventLog`), so a log for
+ * `Deposited(address indexed user, uint256 amount, address indexed sender)`
+ * arrives as `{ user, sender, amount }`. Graph-generated event classes read
+ * `event.parameters[i]` positionally, so serializing that insertion order traps
+ * in `parameters[1].toBigInt()`. Rebuild the object in `inputs` order first.
+ *
+ * Falls back to {@link serializeParams} — preserving the raw order — for unnamed
+ * events (array args), unknown events, and events with incomplete input names.
+ */
+export function serializeEventArgs(args: unknown, abi: Abi, eventName: string): ParamEntry[] {
+  if (args === null || typeof args !== "object" || Array.isArray(args)) {
+    return serializeParams(args);
+  }
+
+  const event = findEventAbiItem(abi, eventName, args);
+  if (event === undefined) {
+    return serializeParams(args);
+  }
+
+  const record = args as Record<string, unknown>;
+  const ordered: Record<string, unknown> = {};
+  for (const input of event.inputs) {
+    const name = input.name;
+    if (name === undefined || name === "" || !Object.hasOwn(record, name)) {
+      return serializeParams(args);
+    }
+    ordered[name] = record[name];
+  }
+  return serializeParams(ordered);
+}
+
+/**
+ * Find the ABI event item for a decoded log's `eventName`. When the ABI has
+ * overloaded events, match the one whose input names line up with the decoded
+ * args so the reorder uses the right signature.
+ */
+function findEventAbiItem(
+  abi: Abi,
+  eventName: string,
+  args: object,
+): AbiEvent | undefined {
+  const events = abi.filter(
+    (item): item is AbiEvent => item.type === "event" && item.name === eventName,
+  );
+  if (events.length <= 1) {
+    return events[0];
+  }
+  const keys = new Set(Object.keys(args));
+  return (
+    events.find(
+      (event) =>
+        event.inputs.length === keys.size &&
+        event.inputs.every((input) => input.name !== undefined && keys.has(input.name)),
+    ) ?? events[0]
+  );
 }
