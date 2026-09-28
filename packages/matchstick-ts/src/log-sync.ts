@@ -6,7 +6,7 @@
 import { parseEventLogs, type Abi, type Address, type Log } from "viem";
 import {
   captureViewMocksFromContract,
-  serializeParams,
+  serializeEventArgs,
   viewFunctionRevertMocks,
   type CallMock,
   type CapturedEvent,
@@ -101,7 +101,7 @@ function decodeLogs(logs: readonly Log[], abi: Abi): CapturedEvent[] {
       blockNumber: Number(log.blockNumber),
       logIndex: log.logIndex ?? 0,
       transactionHash: log.transactionHash,
-      params: serializeParams(log.args),
+      params: serializeEventArgs(log.args, abi, log.eventName),
     });
   }
 
