@@ -54,19 +54,18 @@
     "prepare": "node ./scripts/prepare.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
-  "dependencies": {
-    "matchstick-ts": "workspace:^"
-  },
   "peerDependencies": {
     "hardhat": "^3",
     "@nomicfoundation/hardhat-viem": "^3",
-    "@nomicfoundation/hardhat-network-helpers": "^3"
+    "@nomicfoundation/hardhat-network-helpers": "^3",
+    "matchstick-ts": "^0.4.2"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-network-helpers": "^3.0.8",
     "@nomicfoundation/hardhat-viem": "^3.0.7",
     "@types/node": "^22.0.0",
     "hardhat": "^3.4.0",
+    "matchstick-ts": "workspace:*",
     "typescript": "^5.9.3",
     "viem": "^2.37.9"
   }
