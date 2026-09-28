@@ -183,10 +183,12 @@ Optional when `autoCodegen: true` (default on `runMatchstickTest`).
 
 ```bash
 pnpm install
-pnpm build
-pnpm test
-pnpm typecheck
+pnpm check   # typecheck + build + unit + integration
 ```
+
+`matchstick-ts` and `hardhat-matchstick-ts` are published to npm and independently versioned. Add a
+changeset (`pnpm changeset`) for any consumer-visible change; see [RELEASING.md](RELEASING.md) for
+the release flow and the one-time npm bootstrap.
 
 ## License
 

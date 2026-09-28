@@ -12,3 +12,4 @@ packages/example/tests/runner.test.ts
 packages/example/tests/.tmp/
 packages/example/tests/.bin/
 packages/example/tests/.latest.json
+.pnpm-store/*
