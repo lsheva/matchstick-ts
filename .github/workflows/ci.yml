@@ -1,37 +1,40 @@
 name: CI
 
 on:
+  pull_request:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
+  validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v7
         with:
-          version: 10
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check:code
 
-      - uses: actions/setup-node@v4
+  node-22:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Build
-        run: pnpm build
-
-      - name: Unit tests
-        run: pnpm test:unit
-
-      - name: Integration (packages/example)
-        run: pnpm test:integration
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm --filter matchstick-ts test
+      - run: pnpm typecheck

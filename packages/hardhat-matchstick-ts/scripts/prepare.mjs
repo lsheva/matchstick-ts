@@ -1,6 +1,5 @@
-// Build the sibling `matchstick-ts` package (since `link:../matchstick-ts`
-// only symlinks the folder — it does not install or build its contents),
-// then build this package.
+// Build the sibling `matchstick-ts` package (a workspace dependency, whose
+// `node_modules/` and `dist/` may not exist yet), then build this package.
 //
 // Runs in two contexts:
 //   1. Local monorepo dev: `pnpm install` at the workspace root triggers
