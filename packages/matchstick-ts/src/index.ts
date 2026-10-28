@@ -6,6 +6,7 @@ export {
   indexResultsFromSnapshot,
   cleanupJsonFiles,
   cleanupGeneratedFiles,
+  writeJsonInputs,
   DEFAULT_TMP_DIR,
 } from "./snapshot.ts";
 export type {
@@ -42,7 +43,16 @@ export type {
 export { MatchstickHarness } from "./harness.ts";
 export type { MatchstickHarnessOptions } from "./harness.ts";
 export { SubgraphLogSync } from "./log-sync.ts";
+export { mergeContextOverrides, resolveContextOverrides } from "./context.ts";
 export type {
+  ContextOverrides,
+  ContextValue,
+  DataSourceContextOverride,
+  ResolvedContextOverrides,
+} from "./context.ts";
+export type { ContextEntry } from "./codegen/parse-subgraph-manifest.ts";
+export type {
+  BindOptions,
   DataSourceBinding,
   LogsQueryingClient,
   IndexOptions,

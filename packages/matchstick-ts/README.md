@@ -61,6 +61,17 @@ await sync.anchor(); // start from the current chain head
 const [counter] = await sync.index(readsFor("Counter", ["0"]));
 ```
 
+Override `dataSource.context()` keys from the manifest, e.g. addresses of freshly deployed contracts.
+Plain values take the manifest entry's type; keys the manifest lacks need `{ type, data }`:
+
+```ts
+sync.bind("Oracle", oracleAddress, oracleAbi, {
+  context: { btcUsdAddress: btcUsdAddress, pair: { type: "String", data: "BTC/USD" } },
+});
+```
+
+`runMatchstickTest` accepts the same overrides as `context: { Oracle: { … } }`.
+
 `index()` ingests new logs (`eth_getLogs`) and then replays the **entire** buffered event history
 through Matchstick — Matchstick has no incremental store. Use `anchor()` after deploy and `reset()`
 between tests; see the repository README for `bind` / `anchor` / `ingest` / `index` / `reset`.

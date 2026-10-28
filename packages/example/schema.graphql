@@ -53,4 +53,6 @@ type CloneValue @entity(immutable: false) {
   id: ID!
   value: BigInt!
   hasContext: Boolean!
+  "Context key `pair`, which only a test override sets (the template has no manifest context)."
+  pair: String
 }

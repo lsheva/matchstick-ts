@@ -99,7 +99,7 @@ describe("generateRunner: context, block handlers, templates", () => {
     const text = await generate();
     assert.match(
       text,
-      /dsName == "Oracle" && handler == "initFeeds"\) \{\s+dataSourceMock\.setReturnValues\(address, "base-sepolia", dataSourceContext0\(\)\);\s+initFeeds\(block\);/,
+      /dsName == "Oracle" && handler == "initFeeds"\) \{\s+dataSourceMock\.setReturnValues\(address, "base-sepolia", withContextOverrides\("Oracle", dataSourceContext0\(\)\)\);\s+initFeeds\(block\);/,
     );
     assert.match(text, /handler == "onBlock"/);
     assert.doesNotMatch(text, /handler == "onCall"/);
@@ -114,7 +114,7 @@ describe("generateRunner: context, block handlers, templates", () => {
     );
     assert.match(
       text,
-      /eventName == "AnswerUpdated" && \(dsName == "Aggregator" \|\| dsName == ""\)\) \{\s+dataSourceMock\.setReturnValues\(address, "base-sepolia", dataSourceContext1\(\)\);/,
+      /eventName == "AnswerUpdated" && \(dsName == "Aggregator" \|\| dsName == ""\)\) \{\s+dataSourceMock\.setReturnValues\(address, "base-sepolia", withContextOverrides\("Aggregator", dataSourceContext1\(\)\)\);/,
     );
   });
 });

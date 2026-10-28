@@ -243,3 +243,59 @@ describe("block handlers and data source context", () => {
     assert.deepEqual(snap.saved("CloneValue"), [{ id: clone, value: "8", hasContext: false }]);
   });
 });
+
+describe("context overrides", () => {
+  const events = [{ ...valueSetCaptured(1n, 5), dataSource: "Counter" }];
+
+  it("replaces overridden keys and keeps the other manifest keys", async () => {
+    const snap = await runMatchstickTest({
+      events,
+      reads: [],
+      callMocks: counterCallMocks,
+      context: { Counter: { label: "override" } },
+    });
+
+    const init = snap.entity("Init", "0");
+    assert.equal(init?.label, "override");
+    assert.equal(init?.threshold, "100");
+  });
+
+  it("infers the manifest type for plain values", async () => {
+    const snap = await runMatchstickTest({
+      events,
+      reads: [],
+      callMocks: counterCallMocks,
+      context: { Counter: { threshold: 2n ** 200n } },
+    });
+
+    assert.equal(snap.entity("Init", "0")?.threshold, (2n ** 200n).toString());
+    assert.equal(snap.entity("Init", "0")?.label, "primary");
+  });
+
+  it("sets keys the template manifest lacks from explicit { type, data }", async () => {
+    const clone = "0x00000000000000000000000000000000000000c1";
+    const snap = await runMatchstickTest({
+      events: [{ ...valueSetCaptured(8n, 4), address: clone, dataSource: "CounterClone" }],
+      reads: [],
+      callMocks: counterCallMocks,
+      context: { CounterClone: { pair: { type: "String", data: "BTC/USD" } } },
+    });
+
+    assert.deepEqual(snap.saved("CloneValue"), [
+      { id: clone, value: "8", hasContext: false, pair: "BTC/USD" },
+    ]);
+  });
+
+  it("rejects a plain value for a key the manifest does not declare", async () => {
+    await assert.rejects(
+      () =>
+        runMatchstickTest({
+          events,
+          reads: [],
+          callMocks: counterCallMocks,
+          context: { CounterClone: { pair: "BTC/USD" } },
+        }),
+      /context key "pair" is not in the manifest context of "CounterClone"/,
+    );
+  });
+});

@@ -12,6 +12,7 @@ import {
   type CapturedEvent,
   type ViewCallingClient,
 } from "./event-capture.ts";
+import { mergeContextOverrides, type ContextOverrides, type DataSourceContextOverride } from "./context.ts";
 import {
   cleanupGeneratedFiles,
   DEFAULT_TMP_DIR,
@@ -44,6 +45,21 @@ export interface DataSourceBinding {
   name: string;
   address: Address;
   abi: Abi;
+  /** `dataSource.context()` overrides for this data source / template. */
+  context?: DataSourceContextOverride;
+}
+
+/** Options for {@link SubgraphLogSync.bind}. */
+export interface BindOptions {
+  /** Call mocks overriding the seeded per-view-function revert mocks. */
+  mocks?: CallMock[];
+  /**
+   * `dataSource.context()` overrides. Keys replace the manifest's entries for
+   * this data source (or template); other manifest keys are kept. Plain
+   * values take their type from the manifest entry with the same key; keys
+   * the manifest does not declare need an explicit `{ type, data }`.
+   */
+  context?: DataSourceContextOverride;
 }
 
 /** Block range and data sources for {@link SubgraphLogSync.ingest}. */
@@ -190,6 +206,9 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
    *   `try_*` reads resolve gracefully (reverted = true) by default.
    * - `options.mocks` overrides individual entries — pass `return` mocks for
    *   any reads handlers should observe a value for.
+   * - `options.context` overrides keys of the data source's manifest
+   *   `context:` (e.g. contract addresses deployed fresh by the test).
+   *   Also accepted for template names.
    *
    * To upgrade the seeded revert mocks to `return` mocks carrying *real*
    * on-chain values, call {@link captureViewMocks} after binding (async).
@@ -198,9 +217,9 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
     dataSource: AugmentedDataSources,
     address: Address,
     abi: Abi,
-    options: { mocks?: CallMock[] } = {},
+    options: BindOptions = {},
   ): this {
-    this.bindings.set(dataSource, { name: dataSource, address, abi });
+    this.bindings.set(dataSource, { name: dataSource, address, abi, context: options.context });
     for (const mock of viewFunctionRevertMocks(abi, address)) {
       this.callMocks.set(mockKey(mock), mock);
     }
@@ -339,6 +358,7 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
       events: this.events,
       reads: [...reads],
       callMocks: [...this.callMocks.values()],
+      context: this.contextOverrides(runOverrides),
     });
 
     return indexResultsFromSnapshot(snapshot, reads);
@@ -366,6 +386,7 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
       events: this.events,
       reads: [...reads],
       callMocks: [...this.callMocks.values()],
+      context: this.contextOverrides(runOverrides),
     });
   }
 
@@ -386,6 +407,15 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
       runnerPath: this.runDefaults.runnerPath ?? "tests/runner.test.ts",
       jsonDir: this.runDefaults.jsonDir ?? DEFAULT_TMP_DIR,
     });
+  }
+
+  /** Run defaults < per-binding overrides < per-call `run.context`. */
+  private contextOverrides(runOverrides: RunDefaults<TEntities> | undefined): ContextOverrides {
+    const fromBindings: ContextOverrides = {};
+    for (const binding of this.bindings.values()) {
+      if (binding.context !== undefined) fromBindings[binding.name] = binding.context;
+    }
+    return mergeContextOverrides(this.runDefaults.context, fromBindings, runOverrides?.context);
   }
 
   private resolveBindings(names: readonly AugmentedDataSources[] | undefined): DataSourceBinding[] {

@@ -40,6 +40,30 @@ describe("Hardhat → Matchstick → Counter", () => {
     assert.equal(conn.matchstick.eventCount, 1);
   });
 
+  it("overrides dataSource.context() per binding, including templates", async () => {
+    const primary = await deployCounter(conn);
+    const clone = await deployCounter(conn);
+    await conn.matchstick.reset();
+
+    conn.matchstick.bind("Counter", primary.address, primary.abi, {
+      context: { label: "fresh" },
+    });
+    conn.matchstick.bind("CounterClone", clone.address, clone.abi, {
+      context: { pair: { type: "String", data: "BTC/USD" } },
+    });
+    await conn.matchstick.anchor();
+
+    const wallet = (await conn.viem.getWalletClients())[0];
+    await primary.counter.write.setValue([1n], { account: wallet.account, chain: wallet.chain });
+    await clone.counter.write.setValue([2n], { account: wallet.account, chain: wallet.chain });
+
+    const snap = await conn.matchstick.indexSnapshot([]);
+    const init = snap.entity("Init", "0");
+    assert.equal(init?.label, "fresh");
+    assert.equal(init?.threshold, "100", "keys without an override keep the manifest value");
+    assert.equal(snap.entity("CloneValue", clone.address.toLowerCase())?.pair, "BTC/USD");
+  });
+
   it("captures real on-chain view values via `captureViewMocks`", async () => {
     const { counter, abi, address } = await deployCounter(conn, { multiplier: 7n });
     await conn.matchstick.reset();

@@ -38,7 +38,11 @@ export function handleBlock(block: ethereum.Block): void {
 export function handleCloneValueSet(event: ValueSet): void {
   const entity = new CloneValue(event.address.toHexString());
   entity.value = event.params.newValue;
-  entity.hasContext = dataSource.context().isSet("label");
+  const context = dataSource.context();
+  entity.hasContext = context.isSet("label");
+  if (context.isSet("pair")) {
+    entity.pair = context.getString("pair");
+  }
   entity.save();
 }
 

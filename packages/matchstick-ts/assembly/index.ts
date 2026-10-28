@@ -11,6 +11,7 @@
  */
 import {
   Address,
+  BigDecimal,
   BigInt,
   Bytes,
   Entity,
@@ -486,4 +487,39 @@ export function assignTimeseriesFields(entity: Entity): string {
   const id = (_blockNumber << 32) | seq;
   entity.set("id", Value.fromI64(id));
   return id.toString();
+}
+
+/* -------------------------------------------------------------------------- *
+ * Context overrides.
+ *
+ * `runMatchstickTest` writes `context.json` entries as `{ type, data }` with
+ * manifest context types. `data` is a string for every scalar (so i64 and
+ * 256-bit values keep their precision), a boolean for Bool, and an array of
+ * entries for List. Mirrors `contextValueExpr` in
+ * `src/codegen/generate-runner.ts`, which handles the manifest's own values.
+ * -------------------------------------------------------------------------- */
+
+/** Convert one `{ type, data }` context entry to the `Value` stored in `DataSourceContext`. */
+export function contextValueFromJson(entry: JSONValue): Value {
+  const obj = entry.toObject();
+  const type = obj.get("type")!.toString();
+  const data = obj.get("data")!;
+
+  if (type == "String") return Value.fromString(data.toString());
+  if (type == "Bytes") return Value.fromBytes(Bytes.fromHexString(data.toString()) as Bytes);
+  if (type == "BigInt") return Value.fromBigInt(BigInt.fromString(data.toString()));
+  if (type == "BigDecimal") return Value.fromBigDecimal(BigDecimal.fromString(data.toString()));
+  if (type == "Int") return Value.fromI32(BigInt.fromString(data.toString()).toI32());
+  if (type == "Int8") return Value.fromI64(BigInt.fromString(data.toString()).toI64());
+  if (type == "Bool" || type == "Boolean") return Value.fromBoolean(data.toBool());
+  if (type == "List") {
+    const items = data.toArray();
+    const values = new Array<Value>(items.length);
+    for (let i = 0; i < items.length; i++) {
+      values[i] = contextValueFromJson(items[i]);
+    }
+    return Value.fromArray(values);
+  }
+  abort("matchstick-ts: unsupported context override type " + type);
+  return Value.fromString("");
 }

@@ -8,8 +8,9 @@
  */
 // #endregion
 import { test, clearStore, readFile, createMockedFunction } from "matchstick-as/assembly/index";
-import { Address, JSONValue, TypedMap, ethereum, json, log, store } from "@graphprotocol/graph-ts";
+import { Address, DataSourceContext, JSONValue, TypedMap, ethereum, json, log, store } from "@graphprotocol/graph-ts";
 import {
+  contextValueFromJson,
   createMockBlock,
   ethereumValueFromTypedJson,
   JSONObjectBuilder,
@@ -23,7 +24,7 @@ import {
 // #endregion
 
 // #region generated:config
-/** Directory `runMatchstickTest` writes `events.json` / `reads.json` / `mocks.json` to. */
+/** Directory `runMatchstickTest` writes `events.json` / `reads.json` / `mocks.json` / `context.json` to. */
 const TEMP_DIR = "tests/.tmp";
 // #endregion
 
@@ -51,6 +52,23 @@ function dispatchEvent(
 ): void {}
 // #endregion
 
+/**
+ * Per-data-source context overrides from `context.json`:
+ * `{ [dataSource]: { [key]: { type, data } } }`. Loaded once per run.
+ */
+let contextOverrides = new TypedMap<string, JSONValue>();
+
+/** `context` (a data source's manifest context) with its overridden keys replaced. */
+function withContextOverrides(dsName: string, context: DataSourceContext): DataSourceContext {
+  const override = contextOverrides.get(dsName);
+  if (override == null) return context;
+  const entries = override!.toObject().entries;
+  for (let i = 0; i < entries.length; i++) {
+    context.set(entries[i].key, contextValueFromJson(entries[i].value));
+  }
+  return context;
+}
+
 /** Optional string field of a JSON object, or "" when absent. */
 function stringField(obj: TypedMap<string, JSONValue>, key: string): string {
   const value = obj.get(key);
@@ -67,6 +85,7 @@ test("process events and dump store snapshot", () => {
   clearStore();
 
   const events = json.fromBytes(readFile(TEMP_DIR + "/events.json")).toArray();
+  contextOverrides = json.fromBytes(readFile(TEMP_DIR + "/context.json")).toObject();
 
   // Install view-call mocks for the reads handlers may perform. Each entry
   // is one of:
