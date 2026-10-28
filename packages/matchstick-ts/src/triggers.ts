@@ -28,7 +28,17 @@ export type Trigger = CapturedEvent | BlockTrigger;
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
-export function buildTriggers(manifest: SubgraphManifest, events: CapturedEvent[]): Trigger[] {
+/**
+ * `addresses` maps data source names to the addresses they are bound to under
+ * test. A block handler's `dataSource.address()` is the bound address, else
+ * the address of the data source's first captured event, else the manifest's
+ * `source.address`.
+ */
+export function buildTriggers(
+  manifest: SubgraphManifest,
+  events: CapturedEvent[],
+  addresses: Record<string, string> = {},
+): Trigger[] {
   const once: BlockTrigger[] = [];
   const everyBlock: Omit<BlockTrigger, "blockNumber" | "blockTimestamp">[] = [];
 
@@ -37,7 +47,7 @@ export function buildTriggers(manifest: SubgraphManifest, events: CapturedEvent[
     if (blockHandlers.length === 0) continue;
 
     const ownEvent = events.find((e) => e.dataSource === ds.name);
-    const address = ownEvent?.address ?? ds.source.address ?? ZERO_ADDRESS;
+    const address = addresses[ds.name] ?? ownEvent?.address ?? ds.source.address ?? ZERO_ADDRESS;
 
     for (const bh of blockHandlers) {
       const kind = bh.filter?.kind;

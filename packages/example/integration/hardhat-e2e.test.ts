@@ -64,6 +64,22 @@ describe("Hardhat → Matchstick → Counter", () => {
     assert.equal(snap.entity("CloneValue", clone.address.toLowerCase())?.pair, "BTC/USD");
   });
 
+  it("gives block handlers the bound address when their data source emitted nothing", async () => {
+    const primary = await deployCounter(conn);
+    const clone = await deployCounter(conn);
+    await conn.matchstick.reset();
+
+    conn.matchstick.bind("Counter", primary.address, primary.abi);
+    conn.matchstick.bind("CounterClone", clone.address, clone.abi);
+    await conn.matchstick.anchor();
+
+    const wallet = (await conn.viem.getWalletClients())[0];
+    await clone.counter.write.setValue([3n], { account: wallet.account, chain: wallet.chain });
+
+    const snap = await conn.matchstick.indexSnapshot([]);
+    assert.equal(snap.entity("Init", "0")?.address, primary.address.toLowerCase());
+  });
+
   it("captures real on-chain view values via `captureViewMocks`", async () => {
     const { counter, abi, address } = await deployCounter(conn, { multiplier: 7n });
     await conn.matchstick.reset();

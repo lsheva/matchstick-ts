@@ -163,7 +163,7 @@ Pass `emulateTimeseries: false` to keep only the `Int8` rewrite. `@aggregation` 
 
 The generated runner replays more than event handlers:
 
-- **`dataSource.context()`:** returns the data source's manifest `context:` values, with any [context overrides](#context-overrides) applied. `dataSource.address()` and `.network()` are set per trigger, to the emitting contract and the manifest network.
+- **`dataSource.context()`:** returns the data source's manifest `context:` values, with any [context overrides](#context-overrides) applied. `dataSource.address()` and `.network()` are set per trigger, to the emitting contract and the manifest network. Block handlers get the address the data source is bound to (`bind`, or `RunOptions.addresses` in synthetic tests), even when it emitted nothing, and fall back to the manifest's `source.address`.
 - **Block handlers:** replay only sees blocks that carry captured events. `filter: { kind: once }` handlers run before the first event, in that event's block. Unfiltered handlers run after the last event of each such block. `call` and `polling` filters are not replayed.
 - **Templates:** events bound with `bind("<template name>", address, abi)` route to the template's handlers, with an empty context unless overridden. Captured events record their data source. Events without one go to the first data source that handles that event name.
 

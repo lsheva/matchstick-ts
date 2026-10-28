@@ -122,6 +122,23 @@ describe("writeJsonInputs", () => {
     }
   });
 
+  it("routes addresses into block triggers and rejects unknown data sources", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ctx-json-"));
+    try {
+      const bound = "0x00000000000000000000000000000000000000b1";
+      await writeJsonInputs(dir, manifest, { events: [], reads: [], addresses: { Oracle: bound } });
+      const triggers = JSON.parse(await readFile(join(dir, "events.json"), "utf8"));
+      assert.equal(triggers[0].address, bound);
+
+      await assert.rejects(
+        () => writeJsonInputs(dir, manifest, { events: [], reads: [], addresses: { Nope: bound } }),
+        /address for unknown data source "Nope"/,
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects before writing anything when an override is invalid", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ctx-json-"));
     try {
@@ -140,7 +157,10 @@ describe("writeJsonInputs", () => {
 describe("SubgraphLogSync context overrides", () => {
   const client: LogsQueryingClient = { getBlockNumber: async () => 0n, getLogs: async () => [] };
   const address = "0x0000000000000000000000000000000000000001" as Address;
-  type WithOverrides = { contextOverrides(run?: { context?: ContextOverrides }): ContextOverrides };
+  type WithOverrides = {
+    contextOverrides(run?: { context?: ContextOverrides }): ContextOverrides;
+    boundAddresses(run?: { addresses?: Record<string, string> }): Record<string, string>;
+  };
 
   it("merges run defaults, bindings and per-call overrides, and reset() clears bindings", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ctx-sync-"));
@@ -161,6 +181,9 @@ describe("SubgraphLogSync context overrides", () => {
       Oracle: { feed: "bound", startBlock: 2n },
       Aggregator: { pair: { type: "String", data: "BTC/USD" } },
     });
+
+    const addresses = (sync as unknown as WithOverrides).boundAddresses({ addresses: { Aggregator: "0xcall" } });
+    assert.deepEqual(addresses, { Oracle: address, Aggregator: "0xcall" });
 
     await sync.reset();
     assert.deepEqual(merge(), { Oracle: { feed: "default", startBlock: 1n } });
