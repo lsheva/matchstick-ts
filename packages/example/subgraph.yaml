@@ -1,4 +1,4 @@
-specVersion: 1.0.0
+specVersion: 1.1.0
 schema:
   file: ./schema.graphql
 dataSources:
@@ -8,6 +8,13 @@ dataSources:
     source:
       address: "0x0000000000000000000000000000000000000001"
       abi: Counter
+    context:
+      label:
+        type: String
+        data: "primary"
+      threshold:
+        type: BigInt
+        data: "100"
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.9
@@ -16,9 +23,17 @@ dataSources:
         - Counter
         - SignedCounter
         - Config
+        - ValueSample
+        - Init
+        - BlockTick
       abis:
         - name: Counter
           file: ./abis/Counter.json
+      blockHandlers:
+        - handler: handleInit
+          filter:
+            kind: once
+        - handler: handleBlock
       eventHandlers:
         - event: ValueSet(uint256)
           handler: handleValueSet
@@ -26,4 +41,23 @@ dataSources:
           handler: handleSignedValueSet
         - event: ConfigUpdated((uint256,int256,address,bool))
           handler: handleConfigUpdated
+      file: ./src/mapping.ts
+templates:
+  - kind: ethereum
+    name: CounterClone
+    network: mainnet
+    source:
+      abi: Counter
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - CloneValue
+      abis:
+        - name: Counter
+          file: ./abis/Counter.json
+      eventHandlers:
+        - event: ValueSet(uint256)
+          handler: handleCloneValueSet
       file: ./src/mapping.ts

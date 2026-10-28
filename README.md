@@ -150,6 +150,23 @@ const snap = await runMatchstickTest({
 assert.equal(snap.get("MyEntity", "0", "field"), "99");
 ```
 
+## Timeseries entities
+
+`@entity(timeseries: true)` types work even though matchstick 0.6.0 rejects the `Timestamp` value kind. For each run, the generated schema is patched so that:
+
+- `Timestamp` fields are stored as `Int8`. The i64 payload is unchanged, and the snapshot still returns a decimal string.
+- `save()` sets `id` and `timestamp` the way graph-node does, ignoring the mapping's values. The id becomes `(blockNumber << 32) | seq`, where `seq` counts timeseries saves within the block. The timestamp becomes the event's block time in **microseconds**. Mappings that write `new Data(0)` therefore produce one row per save, not a single overwritten row.
+
+Pass `emulateTimeseries: false` to keep only the `Int8` rewrite. `@aggregation` types are not computed; graph-node builds them outside the mapping.
+
+## Block handlers, context and templates
+
+The generated runner replays more than event handlers:
+
+- **`dataSource.context()`:** returns the data source's manifest `context:` values. `dataSource.address()` and `.network()` are set per trigger, to the emitting contract and the manifest network.
+- **Block handlers:** replay only sees blocks that carry captured events. `filter: { kind: once }` handlers run before the first event, in that event's block. Unfiltered handlers run after the last event of each such block. `call` and `polling` filters are not replayed.
+- **Templates:** events bound with `bind("<template name>", address, abi)` route to the template's handlers, with an empty context. Captured events record their data source. Events without one go to the first data source that handles that event name.
+
 ## Verbose Matchstick output
 
 - `matchstick: { verbose: true }` in Hardhat config

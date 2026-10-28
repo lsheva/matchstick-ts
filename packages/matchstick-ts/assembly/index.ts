@@ -85,7 +85,31 @@ export function createMockEvent<T extends ethereum.Event>(
     event.block.timestamp = BigInt.fromString(blockTimestampStr);
   }
 
+  setCurrentBlock(event.block.number.toI64(), event.block.timestamp.toI64());
+
   return changetype<T>(event);
+}
+
+/**
+ * Create the `ethereum.Block` passed to a block handler: matchstick's default
+ * mock block with `number` / `timestamp` overridden (empty string = keep the
+ * default), mirroring {@link createMockEvent}.
+ */
+export function createMockBlock(
+  blockNumberStr: string = "",
+  blockTimestampStr: string = "",
+): ethereum.Block {
+  const block = newMockEvent().block;
+  if (blockNumberStr.length > 0) {
+    block.number = BigInt.fromString(blockNumberStr);
+  }
+  if (blockTimestampStr.length > 0) {
+    block.timestamp = BigInt.fromString(blockTimestampStr);
+  }
+
+  setCurrentBlock(block.number.toI64(), block.timestamp.toI64());
+
+  return block;
 }
 
 /**
@@ -405,4 +429,61 @@ export function getTrackedIdsForType(entityType: string): Array<string> {
     return _tracker.get(entityType);
   }
   return new Array<string>();
+}
+
+/* -------------------------------------------------------------------------- *
+ * Timeseries emulation.
+ *
+ * graph-node ignores the `id` and `timestamp` a mapping sets on an
+ * `@entity(timeseries: true)` row and assigns them in `store.set`:
+ *   - id        = (blockNumber << 32) | seq, where seq counts saves of any
+ *                 timeseries type within the block, starting at 0
+ *                 (Bytes ids: 4-byte BE block ++ 4-byte BE seq)
+ *   - timestamp = block time in microseconds since the epoch
+ * matchstick does neither, so the patched generated schema calls
+ * `assignTimeseriesFields` before `store.set` for timeseries types.
+ *
+ * The timestamp is written as Int8 rather than Timestamp because matchstick
+ * 0.6.0 rejects StoreValueKind 9; the payload is the same i64.
+ * -------------------------------------------------------------------------- */
+
+let _blockNumber: i64 = 0;
+let _blockTimestamp: i64 = 0;
+let _seqBlock: i64 = -1;
+let _seq: i64 = 0;
+
+/** Record the block the next handler runs in. Called by `createMockEvent`. */
+export function setCurrentBlock(blockNumber: i64, blockTimestamp: i64): void {
+  _blockNumber = blockNumber;
+  _blockTimestamp = blockTimestamp;
+}
+
+/**
+ * Overwrite `id` and `timestamp` on a timeseries entity the way graph-node
+ * does, and return the store key to save it under.
+ */
+export function assignTimeseriesFields(entity: Entity): string {
+  if (_seqBlock != _blockNumber) {
+    _seqBlock = _blockNumber;
+    _seq = 0;
+  }
+  const seq = _seq;
+  _seq += 1;
+
+  entity.set("timestamp", Value.fromI64(_blockTimestamp * 1000000));
+
+  const current = entity.get("id");
+  if (current != null && current.kind == ValueKind.BYTES) {
+    const id = new Bytes(8);
+    for (let i = 0; i < 4; i++) {
+      id[i] = u8((_blockNumber >> (8 * (3 - i))) & 0xff);
+      id[4 + i] = u8((seq >> (8 * (3 - i))) & 0xff);
+    }
+    entity.set("id", Value.fromBytes(id));
+    return id.toHexString();
+  }
+
+  const id = (_blockNumber << 32) | seq;
+  entity.set("id", Value.fromI64(id));
+  return id.toString();
 }

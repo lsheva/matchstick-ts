@@ -18,3 +18,39 @@ type Config @entity(immutable: false) {
   treasury: Bytes!
   active: Boolean!
 }
+
+"One row per ValueSet. graph-node assigns `id` and `timestamp` itself; the mapping's values are ignored."
+type ValueSample @entity(timeseries: true) {
+  id: Int8!
+  timestamp: Timestamp!
+  value: BigInt!
+}
+
+type ValueStats @aggregation(intervals: ["hour"], source: "ValueSample") {
+  id: Int8!
+  timestamp: Timestamp!
+  total: BigInt! @aggregate(fn: "sum", arg: "value")
+}
+
+"Written once by the `once` block handler from the data source context."
+type Init @entity(immutable: true) {
+  id: ID!
+  label: String!
+  threshold: BigInt!
+  address: Bytes!
+  blockNumber: BigInt!
+}
+
+"One row per block, written by the unfiltered block handler."
+type BlockTick @entity(immutable: true) {
+  id: ID!
+  number: BigInt!
+  timestamp: BigInt!
+}
+
+"ValueSet seen through the CounterClone template (keyed by emitting address)."
+type CloneValue @entity(immutable: false) {
+  id: ID!
+  value: BigInt!
+  hasContext: Boolean!
+}

@@ -1,11 +1,46 @@
-import { BigInt } from "@graphprotocol/graph-ts";
+import { BigInt, dataSource, ethereum } from "@graphprotocol/graph-ts";
 import {
   Counter as CounterContract,
   ValueSet,
   SignedValueSet,
   ConfigUpdated,
 } from "../generated/Counter/Counter";
-import { Counter, SignedCounter, Config } from "../generated/schema";
+import {
+  BlockTick,
+  CloneValue,
+  Config,
+  Counter,
+  Init,
+  SignedCounter,
+  ValueSample,
+} from "../generated/schema";
+
+// `once` block handler: reads the manifest `context:` before any event.
+export function handleInit(block: ethereum.Block): void {
+  const context = dataSource.context();
+  const init = new Init("0");
+  init.label = context.getString("label");
+  init.threshold = context.getBigInt("threshold");
+  init.address = dataSource.address();
+  init.blockNumber = block.number;
+  init.save();
+}
+
+export function handleBlock(block: ethereum.Block): void {
+  const tick = new BlockTick(block.number.toString());
+  tick.number = block.number;
+  tick.timestamp = block.timestamp;
+  tick.save();
+}
+
+// Template handler typed with the data source's `ValueSet` class, as real
+// mappings often are.
+export function handleCloneValueSet(event: ValueSet): void {
+  const entity = new CloneValue(event.address.toHexString());
+  entity.value = event.params.newValue;
+  entity.hasContext = dataSource.context().isSet("label");
+  entity.save();
+}
 
 export function handleValueSet(event: ValueSet): void {
   let entity = Counter.load("0");
@@ -24,6 +59,11 @@ export function handleValueSet(event: ValueSet): void {
   }
 
   entity.save();
+
+  const sample = new ValueSample(0);
+  sample.timestamp = 0;
+  sample.value = event.params.newValue;
+  sample.save();
 }
 
 export function handleSignedValueSet(event: SignedValueSet): void {

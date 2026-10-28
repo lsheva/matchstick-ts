@@ -62,6 +62,22 @@ function isEntity(node: ObjectTypeDefinitionNode): boolean {
   return (node.directives ?? []).some((d) => d.name.value === "entity");
 }
 
+function isTimeseries(node: ObjectTypeDefinitionNode): boolean {
+  const entity = (node.directives ?? []).find((d) => d.name.value === "entity");
+  const arg = entity?.arguments?.find((a) => a.name.value === "timeseries");
+  return arg?.value.kind === "BooleanValue" && arg.value.value;
+}
+
+/** Names of the `@entity(timeseries: true)` types declared in a schema. */
+export function timeseriesEntityTypes(schemaSource: string): string[] {
+  const doc = parse(schemaSource);
+  const names: string[] = [];
+  for (const def of doc.definitions) {
+    if (def.kind === "ObjectTypeDefinition" && isTimeseries(def)) names.push(def.name.value);
+  }
+  return names;
+}
+
 interface UnwrappedType {
   named: string;
   nonNull: boolean;

@@ -62,6 +62,13 @@ export type ParamEntry = [name: string, value: EncodedParamValue];
 export interface CapturedEvent {
   event: string;
   address: Address;
+  /**
+   * Manifest data source or template (`dataSources[].name` /
+   * `templates[].name`) that emitted the log. Routes the event to that data
+   * source's handler and context; when absent, the first data source with a
+   * handler for `event` wins.
+   */
+  dataSource?: string;
   blockNumber: number;
   /**
    * Unix timestamp (seconds) of the block that included the log. Forwarded
