@@ -244,6 +244,21 @@ describe("block handlers and data source context", () => {
   });
 });
 
+describe("large snapshots", () => {
+  it("dumps thousands of entities without running out of memory", async () => {
+    const blocks = 2_000;
+    const events = Array.from({ length: blocks }, (_, i) => ({
+      ...valueSetCaptured(BigInt(i), i + 1),
+      blockTimestamp: 1_000 + i * 12,
+      dataSource: "Counter",
+    }));
+    const snap = await runMatchstickTest({ events, reads: [], callMocks: counterCallMocks });
+
+    assert.equal(snap.saved("BlockTick").length, blocks);
+    assert.equal(snap.saved("ValueSample").length, blocks);
+  });
+});
+
 describe("context overrides", () => {
   const events = [{ ...valueSetCaptured(1n, 5), dataSource: "Counter" }];
 
