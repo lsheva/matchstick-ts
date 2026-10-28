@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { generateEntities, generateRunner, writeIfChanged } from "../src/codegen/index.ts";
+import { fillTemplate } from "../src/codegen/generate-runner.ts";
 
 describe("generateEntities", () => {
   it("emits a module-augmenting entities.d.ts", async () => {
@@ -43,7 +44,8 @@ describe("generateRunner", () => {
       const text = await readFile(outputPath, "utf8");
       assert.match(text, /handleValueSet/);
       assert.match(text, /ValueSet/);
-      assert.match(text, /readFile\("tests\/\.tmp\/events\.json"\)/);
+      assert.match(text, /const TEMP_DIR = "tests\/\.tmp";/);
+      assert.match(text, /readFile\(TEMP_DIR \+ "\/events\.json"\)/);
       assert.match(text, /SNAPSHOT:/);
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -60,7 +62,7 @@ describe("generateRunner", () => {
         tempDir: "tests/.tmp",
       });
       const text = await readFile(outputPath, "utf8");
-      assert.match(text, /m\.get\("kind"\)/);
+      assert.match(text, /stringField\(m, "kind"\)/);
       assert.match(text, /kind == "return"/);
       assert.match(text, /m\.get\("outputs"\)/);
       assert.match(text, /m\.get\("returns"\)/);
@@ -82,10 +84,10 @@ describe("generateRunner", () => {
         tempDir: "tests/.tmp",
       });
       const text = await readFile(outputPath, "utf8");
-      assert.match(text, /evt\.get\("transactionHash"\)/);
-      assert.match(text, /evt\.get\("blockNumber"\)/);
-      assert.match(text, /evt\.get\("logIndex"\)/);
-      assert.match(text, /evt\.get\("blockTimestamp"\)/);
+      assert.match(text, /stringField\(evt, "transactionHash"\)/);
+      assert.match(text, /intField\(evt, "blockNumber"\)/);
+      assert.match(text, /intField\(evt, "logIndex"\)/);
+      assert.match(text, /intField\(evt, "blockTimestamp"\)/);
       assert.match(
         text,
         /createMockEvent<handleValueSetEvent>\(params, txHash, blockNum, logIndex, address, blockTimestamp\)/,
@@ -93,6 +95,42 @@ describe("generateRunner", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("fillTemplate", () => {
+  const template = [
+    "before",
+    "// #region generated:a",
+    "stub a",
+    "// #endregion",
+    "middle",
+    "// #region generated:b",
+    "// #endregion",
+    "after",
+  ].join("\n");
+
+  it("replaces only region bodies, keeping the markers", () => {
+    assert.equal(
+      fillTemplate(template, { a: "real a", b: "line 1\nline 2\n" }),
+      [
+        "before",
+        "// #region generated:a",
+        "real a",
+        "// #endregion",
+        "middle",
+        "// #region generated:b",
+        "line 1",
+        "line 2",
+        "// #endregion",
+        "after",
+      ].join("\n"),
+    );
+  });
+
+  it("rejects missing and unknown regions", () => {
+    assert.throws(() => fillTemplate(template, { a: "" }), /no replacement for region "b"/);
+    assert.throws(() => fillTemplate(template, { a: "", b: "", c: "" }), /no region "c"/);
   });
 });
 

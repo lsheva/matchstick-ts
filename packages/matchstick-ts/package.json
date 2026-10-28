@@ -41,13 +41,14 @@
   "files": [
     "dist",
     "src",
-    "assembly"
+    "assembly",
+    "templates"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "prepare": "pnpm run build",
     "test": "node --test tests/*.test.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json && node scripts/typecheck-assembly.mjs"
   },
   "dependencies": {
     "graphql": "^16.11.0",
@@ -67,6 +68,7 @@
   "devDependencies": {
     "@graphprotocol/graph-ts": "0.37.0",
     "@types/node": "^22.0.0",
+    "assemblyscript": "0.19.23",
     "matchstick-as": "0.6.0",
     "typescript": "^5.9.3",
     "viem": "^2.37.9"

@@ -1,0 +1,14 @@
+{
+  "extends": "../node_modules/assemblyscript/std/assembly.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "moduleResolution": "node",
+    "baseUrl": ".",
+    "paths": {
+      "matchstick-ts/assembly": ["./index.ts"]
+    }
+  },
+  "include": ["index.ts", "../templates/runner.ts"]
+}
