@@ -4,7 +4,7 @@
  */
 import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
-import { network } from "hardhat";
+import hre, { network } from "hardhat";
 import { getAddress } from "viem";
 import { read } from "matchstick-ts";
 import { deployCounter } from "../src/deploy-counter.ts";
@@ -13,6 +13,13 @@ const conn = await network.getOrCreate();
 
 describe("Hardhat → Matchstick → Counter", () => {
   after(() => conn.matchstick.reset());
+
+  it("keeps the `matchstick` block of hardhat.config.ts in the resolved config", () => {
+    assert.deepEqual(hre.config.matchstick, {
+      subgraphYaml: "subgraph.yaml",
+      schemaPath: "schema.graphql",
+    });
+  });
 
   it("indexes setValue from chain logs", async () => {
     const { counter, abi, address } = await deployCounter(conn);

@@ -202,7 +202,9 @@ test("process events and dump store snapshot", () => {
     manifestBuilder.setRaw(entityType, jsonArray(idList));
   }
 
-  log.info("MANIFEST: " + manifestBuilder.toString(), []);
+  // Pass the JSON as an argument: graph-ts `format` copies the format string
+  // one character at a time, which is quadratic in its length.
+  log.info("MANIFEST: {}", [manifestBuilder.toString()]);
 
   const outer = new JSONObjectBuilder();
   for (let i = 0; i < typeOrder.length; i++) {
@@ -210,5 +212,5 @@ test("process events and dump store snapshot", () => {
     outer.setRaw(t, byType.get(t).toString());
   }
 
-  log.info("SNAPSHOT: " + outer.toString(), []);
+  log.info("SNAPSHOT: {}", [outer.toString()]);
 });
