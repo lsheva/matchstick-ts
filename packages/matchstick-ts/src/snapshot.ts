@@ -11,8 +11,9 @@ import { once } from "node:events";
 import type { CallMock, CapturedEvent } from "./event-capture.ts";
 import { generateRunner } from "./codegen/generate-runner.ts";
 import { generateEntities, timeseriesEntityTypes } from "./codegen/generate-entities.ts";
-import { readSubgraphManifest } from "./codegen/parse-subgraph-manifest.ts";
+import { readSubgraphManifest, type SubgraphManifest } from "./codegen/parse-subgraph-manifest.ts";
 import { buildTriggers } from "./triggers.ts";
+import { resolveContextOverrides, type ContextOverrides } from "./context.ts";
 /**
  * Default location for the JSON IO files (`events.json`, `reads.json`,
  * `mocks.json`) shared between the TS orchestrator and the AS runner.
@@ -109,7 +110,18 @@ export interface RunOptions<TEntities = AugmentedEntities> {
   /** @deprecated Use {@link RunOptions.callMocks}. */
   revertMocks?: CallMock[];
   /**
-   * Directory where JSON IO files (`events.json`, `reads.json`, `mocks.json`)
+   * `dataSource.context()` overrides keyed by data source / template name.
+   * Overridden keys replace the manifest's entries for that data source;
+   * other manifest keys are kept. Plain values take their type from the
+   * manifest entry with the same key; keys the manifest does not declare
+   * need an explicit `{ type, data }`.
+   *
+   * @example
+   * context: { Oracle: { btcUsdAddress: feed.address }, Aggregator: { pair: { type: "String", data: "BTC/USD" } } }
+   */
+  context?: ContextOverrides;
+  /**
+   * Directory where JSON IO files (`events.json`, `reads.json`, `mocks.json`, `context.json`)
    * are written. Defaults to `tests/.tmp`. Auto-codegen passes this path to
    * the runner template so both sides stay in sync; override only if you've
    * disabled auto-codegen and want to relocate them yourself.
@@ -428,12 +440,7 @@ export async function runMatchstickTest<TEntities = AugmentedEntities>(
     ]);
   }
 
-  const triggers = buildTriggers(await readSubgraphManifest(subgraphYaml), options.events);
-  await mkdir(jsonDir, { recursive: true });
-  await writeFile(join(jsonDir, "events.json"), JSON.stringify(triggers, null, 2));
-  await writeFile(join(jsonDir, "reads.json"), JSON.stringify(options.reads, null, 2));
-  const mergedCallMocks = [...(options.callMocks ?? []), ...(options.revertMocks ?? [])];
-  await writeFile(join(jsonDir, "mocks.json"), JSON.stringify(mergedCallMocks, null, 2));
+  await writeJsonInputs(jsonDir, await readSubgraphManifest(subgraphYaml), options);
 
   // Patch generated/schema.ts so every save() also calls trackSave(type, id).
   // The original is restored in the finally block regardless of outcome.
@@ -525,6 +532,28 @@ export async function runMatchstickTest<TEntities = AugmentedEntities>(
 }
 
 /**
+ * Write the JSON IO files the generated runner reads: `events.json` (the
+ * trigger sequence), `reads.json`, `mocks.json` and `context.json`.
+ *
+ * @throws if a context override names an unknown data source, or a plain
+ *   value's key is not in that data source's manifest context.
+ */
+export async function writeJsonInputs<TEntities>(
+  jsonDir: string,
+  manifest: SubgraphManifest,
+  options: Pick<RunOptions<TEntities>, "events" | "reads" | "callMocks" | "revertMocks" | "context">,
+): Promise<void> {
+  const triggers = buildTriggers(manifest, options.events);
+  const context = resolveContextOverrides(manifest, options.context);
+  await mkdir(jsonDir, { recursive: true });
+  await writeFile(join(jsonDir, "events.json"), JSON.stringify(triggers, null, 2));
+  await writeFile(join(jsonDir, "reads.json"), JSON.stringify(options.reads, null, 2));
+  const mergedCallMocks = [...(options.callMocks ?? []), ...(options.revertMocks ?? [])];
+  await writeFile(join(jsonDir, "mocks.json"), JSON.stringify(mergedCallMocks, null, 2));
+  await writeFile(join(jsonDir, "context.json"), JSON.stringify(context, null, 2));
+}
+
+/**
  * Remove the JSON IO files written by `runMatchstickTest`. Honors the
  * `KEEP_TEMP=1` env var (set by `test:integration:debug` scripts).
  *
@@ -542,6 +571,7 @@ export async function cleanupJsonFiles(jsonDir: string): Promise<void> {
   await rm(join(jsonDir, "events.json"), { force: true });
   await rm(join(jsonDir, "reads.json"), { force: true });
   await rm(join(jsonDir, "mocks.json"), { force: true });
+  await rm(join(jsonDir, "context.json"), { force: true });
 }
 
 /**

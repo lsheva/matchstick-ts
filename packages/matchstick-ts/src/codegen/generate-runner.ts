@@ -208,8 +208,8 @@ export async function generateRunner(options: GenerateRunnerOptions): Promise<vo
       `/** Manifest \`context:\` of ${template ? "template" : "data source"} ${ds.name}. */\n` +
         `function ${contextFn}(): DataSourceContext {\n  const context = new DataSourceContext();\n${contextLines.join("")}  return context;\n}\n`,
     );
-    const setDataSource = `dataSourceMock.setReturnValues(address, ${JSON.stringify(ds.network ?? "mainnet")}, ${contextFn}());`;
     const dsName = JSON.stringify(ds.name);
+    const setDataSource = `dataSourceMock.setReturnValues(address, ${JSON.stringify(ds.network ?? "mainnet")}, withContextOverrides(${dsName}, ${contextFn}()));`;
 
     for (const eh of ds.mapping.eventHandlers ?? []) {
       const eventMatch = eh.event.match(/^(\w+)\(/);
@@ -262,7 +262,7 @@ export async function generateRunner(options: GenerateRunnerOptions): Promise<vo
 
   const imports = [
     `import { dataSourceMock } from "matchstick-as/assembly/index";`,
-    `import { BigDecimal, BigInt, Bytes, DataSourceContext, Value } from "@graphprotocol/graph-ts";`,
+    `import { BigDecimal, BigInt, Bytes, Value } from "@graphprotocol/graph-ts";`,
     `import { createMockEvent } from "${assemblyImport}";`,
   ];
   for (const [file, handlerSet] of handlersByFile) {

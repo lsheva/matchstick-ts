@@ -128,7 +128,7 @@ First `index()` or `runMatchstickTest()` run creates `tests/runner.test.ts` and 
 
 | Method | Role |
 | --- | --- |
-| `bind(dataSource, address, abi)` | Map manifest data source → contract (typed via generated `DataSources`) |
+| `bind(dataSource, address, abi, { mocks?, context? })` | Map manifest data source → contract (typed via generated `DataSources`), optionally overriding its `dataSource.context()` |
 | `anchor()` | Set log cursor to chain head, clear event buffer |
 | `ingest()` | Append new `eth_getLogs` only |
 | `index(reads)` | Ingest + replay **all** buffered events + return entity rows |
@@ -163,9 +163,27 @@ Pass `emulateTimeseries: false` to keep only the `Int8` rewrite. `@aggregation` 
 
 The generated runner replays more than event handlers:
 
-- **`dataSource.context()`:** returns the data source's manifest `context:` values. `dataSource.address()` and `.network()` are set per trigger, to the emitting contract and the manifest network.
+- **`dataSource.context()`:** returns the data source's manifest `context:` values, with any [context overrides](#context-overrides) applied. `dataSource.address()` and `.network()` are set per trigger, to the emitting contract and the manifest network.
 - **Block handlers:** replay only sees blocks that carry captured events. `filter: { kind: once }` handlers run before the first event, in that event's block. Unfiltered handlers run after the last event of each such block. `call` and `polling` filters are not replayed.
-- **Templates:** events bound with `bind("<template name>", address, abi)` route to the template's handlers, with an empty context. Captured events record their data source. Events without one go to the first data source that handles that event name.
+- **Templates:** events bound with `bind("<template name>", address, abi)` route to the template's handlers, with an empty context unless overridden. Captured events record their data source. Events without one go to the first data source that handles that event name.
+
+## Context overrides
+
+Tests usually deploy contracts fresh, so addresses a mapping reads from the manifest `context:` are wrong under test. Override them per data source without touching `subgraph.yaml`:
+
+```ts
+conn.matchstick.bind("Oracle", oracle.address, oracleAbi, {
+  context: { btcUsdAddress: btcUsd.address, hashpriceUsdAddress: hashprice.address },
+});
+// Templates have no manifest context, so give each key an explicit type.
+conn.matchstick.bind("Aggregator", aggregator.address, aggregatorAbi, {
+  context: { pair: { type: "String", data: "BTC/USD" } },
+});
+```
+
+- Overridden keys replace the manifest's entries for that data source. All other manifest keys are kept.
+- A plain value (`string`, `bigint`, `number` or `boolean`) takes its type from the manifest entry with the same key. Keys the manifest does not declare need `{ type, data }`, with one of the manifest types: `String`, `Bytes`, `BigInt`, `BigDecimal`, `Int`, `Int8`, `Bool`, or `List` (whose `data` is an array of `{ type, data }`). A plain value for an undeclared key throws.
+- `runMatchstickTest({ context })` takes the same overrides keyed by data source or template name, e.g. `context: { Oracle: { btcUsdAddress: "0x…" } }`. On `SubgraphLogSync`, per-call `index(reads, { run: { context } })` wins over `bind`, which wins over `runDefaults.context`.
 
 ## Verbose Matchstick output
 

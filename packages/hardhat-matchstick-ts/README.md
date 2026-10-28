@@ -78,12 +78,25 @@ tests/.tmp/
 
 | Method | Role |
 | --- | --- |
-| `bind(dataSource, address, abi)` | Map a manifest data source to a contract |
+| `bind(dataSource, address, abi, { mocks?, context? })` | Map a manifest data source (or template) to a contract, optionally overriding `dataSource.context()` keys |
 | `captureViewMocks()` | Probe view functions for realistic `try_*` return values |
 | `anchor()` | Set the log cursor to chain head and clear the buffer |
 | `ingest()` | Append new `eth_getLogs` only |
 | `index(reads)` | Ingest + replay all buffered events, return entity rows |
 | `reset()` | Clear bindings, events, and cursor (and generated files) |
+
+### Context overrides
+
+Contracts deployed by the test have new addresses, so override the manifest `context:` entries that hold them. Overridden keys replace the manifest's; the rest are kept. Plain values take the manifest entry's type, and keys the manifest lacks (always the case for templates) need `{ type, data }`:
+
+```ts
+conn.matchstick.bind("Oracle", oracle.address, oracleAbi, {
+  context: { btcUsdAddress: btcUsd.address },
+});
+conn.matchstick.bind("Aggregator", aggregator.address, aggregatorAbi, {
+  context: { pair: { type: "String", data: "BTC/USD" } },
+});
+```
 
 ## License
 
