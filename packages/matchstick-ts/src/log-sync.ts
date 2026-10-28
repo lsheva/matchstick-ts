@@ -201,7 +201,9 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
    * Register a deployed contract as a subgraph data source. Pure bookkeeping
    * — no `eth_call`s, safe to call without `await`.
    *
-   * - Records the (address, abi) so {@link ingest} can fetch & decode logs.
+   * - Records the (address, abi) so {@link ingest} can fetch & decode logs,
+   *   and so block handlers see `address` as `dataSource.address()` in
+   *   place of the manifest's `source.address`.
    * - Seeds a `revert` mock per 0-arg view/pure function on `abi` so handler
    *   `try_*` reads resolve gracefully (reverted = true) by default.
    * - `options.mocks` overrides individual entries — pass `return` mocks for
@@ -359,6 +361,7 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
       reads: [...reads],
       callMocks: [...this.callMocks.values()],
       context: this.contextOverrides(runOverrides),
+      addresses: this.boundAddresses(runOverrides),
     });
 
     return indexResultsFromSnapshot(snapshot, reads);
@@ -387,6 +390,7 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
       reads: [...reads],
       callMocks: [...this.callMocks.values()],
       context: this.contextOverrides(runOverrides),
+      addresses: this.boundAddresses(runOverrides),
     });
   }
 
@@ -416,6 +420,15 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
       if (binding.context !== undefined) fromBindings[binding.name] = binding.context;
     }
     return mergeContextOverrides(this.runDefaults.context, fromBindings, runOverrides?.context);
+  }
+
+  /** Run defaults < bound addresses < per-call `run.addresses`. */
+  private boundAddresses(runOverrides: RunDefaults<TEntities> | undefined): Record<string, string> {
+    const fromBindings: Record<string, string> = {};
+    for (const binding of this.bindings.values()) {
+      fromBindings[binding.name] = binding.address;
+    }
+    return { ...this.runDefaults.addresses, ...fromBindings, ...runOverrides?.addresses };
   }
 
   private resolveBindings(names: readonly AugmentedDataSources[] | undefined): DataSourceBinding[] {

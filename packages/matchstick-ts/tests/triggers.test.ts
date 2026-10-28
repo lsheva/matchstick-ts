@@ -54,6 +54,18 @@ describe("buildTriggers", () => {
     assert.equal(withoutEvents.blockNumber, 40);
   });
 
+  it("prefers the bound address even when the data source has no captured events", async () => {
+    const manifest = await readSubgraphManifest(MANIFEST);
+    const bound = "0x00000000000000000000000000000000000000b1";
+    const [once] = buildTriggers(manifest, [{ ...updated(50, 0), dataSource: "Aggregator" }], {
+      Oracle: bound,
+    });
+
+    assert.ok("trigger" in once);
+    assert.equal(once.dataSource, "Oracle");
+    assert.equal(once.address, bound);
+  });
+
   it("passes events through unchanged when no data source has block handlers", () => {
     const events = [updated(1, 0)];
     const manifest = {

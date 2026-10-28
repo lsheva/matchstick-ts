@@ -121,6 +121,13 @@ export interface RunOptions<TEntities = AugmentedEntities> {
    */
   context?: ContextOverrides;
   /**
+   * Addresses data sources are deployed at under test, keyed by data source
+   * name. Block handlers see them as `dataSource.address()` instead of the
+   * manifest's `source.address`, even when the data source has no captured
+   * events. `SubgraphLogSync` fills this from {@link SubgraphLogSync.bind}.
+   */
+  addresses?: Record<string, string>;
+  /**
    * Directory where JSON IO files (`events.json`, `reads.json`, `mocks.json`, `context.json`)
    * are written. Defaults to `tests/.tmp`. Auto-codegen passes this path to
    * the runner template so both sides stay in sync; override only if you've
@@ -535,15 +542,26 @@ export async function runMatchstickTest<TEntities = AugmentedEntities>(
  * Write the JSON IO files the generated runner reads: `events.json` (the
  * trigger sequence), `reads.json`, `mocks.json` and `context.json`.
  *
- * @throws if a context override names an unknown data source, or a plain
+ * @throws if an address or context override names an unknown data source, or a plain
  *   value's key is not in that data source's manifest context.
  */
 export async function writeJsonInputs<TEntities>(
   jsonDir: string,
   manifest: SubgraphManifest,
-  options: Pick<RunOptions<TEntities>, "events" | "reads" | "callMocks" | "revertMocks" | "context">,
+  options: Pick<
+    RunOptions<TEntities>,
+    "events" | "reads" | "callMocks" | "revertMocks" | "context" | "addresses"
+  >,
 ): Promise<void> {
-  const triggers = buildTriggers(manifest, options.events);
+  const known = [...manifest.dataSources, ...(manifest.templates ?? [])].map((ds) => ds.name);
+  for (const name of Object.keys(options.addresses ?? {})) {
+    if (!known.includes(name)) {
+      throw new Error(
+        `matchstick-ts: address for unknown data source "${name}" (manifest has ${known.map((n) => `"${n}"`).join(", ")})`,
+      );
+    }
+  }
+  const triggers = buildTriggers(manifest, options.events, options.addresses);
   const context = resolveContextOverrides(manifest, options.context);
   await mkdir(jsonDir, { recursive: true });
   await writeFile(join(jsonDir, "events.json"), JSON.stringify(triggers, null, 2));
