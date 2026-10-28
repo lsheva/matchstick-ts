@@ -10,6 +10,11 @@
  *   3. Reads `reads.json` (list of `(entityType, id)` pairs) and dumps
  *      every requested entity as a structured `SNAPSHOT: {...}` line.
  *
+ * The code lives in `templates/runner.ts`, a regular AssemblyScript file
+ * typechecked with the rest of `assembly/`. This module only fills its
+ * `// #region generated:<name>` blocks: imports, the JSON IO directory, and
+ * the per-manifest `dispatchBlock` / `dispatchEvent` routing.
+ *
  * Handler imports are grouped by mapping file (each data source's
  * `mapping.file`) so multi-mapping subgraphs work without modification.
  * Templates are routed like data sources; their context is empty because
@@ -119,6 +124,47 @@ function handlerEventType(mappingPath: string, source: string, handler: string):
   return undefined;
 }
 
+/** The runner template: a regular AssemblyScript file, typechecked via `assembly/tsconfig.json`. */
+const TEMPLATE_URL = new URL("../../templates/runner.ts", import.meta.url);
+
+const REGION_RE = /^\/\/ #region generated:([\w-]+)\n[\s\S]*?^\/\/ #endregion$/gm;
+
+/**
+ * Replace the body of every `// #region generated:<name>` block in
+ * `template` with `regions[name]`. Throws if the template and `regions`
+ * disagree on the set of names, so the two cannot drift apart silently.
+ */
+export function fillTemplate(template: string, regions: Record<string, string>): string {
+  const filled = new Set<string>();
+  const output = template.replace(REGION_RE, (_block, name: string) => {
+    if (!Object.hasOwn(regions, name)) {
+      throw new Error(`fillTemplate: no replacement for region "${name}"`);
+    }
+    filled.add(name);
+    const body = regions[name];
+    const separator = body === "" || body.endsWith("\n") ? "" : "\n";
+    return `// #region generated:${name}\n${body}${separator}// #endregion`;
+  });
+  for (const name of Object.keys(regions)) {
+    if (!filled.has(name)) throw new Error(`fillTemplate: template has no region "${name}"`);
+  }
+  return output;
+}
+
+interface Branch {
+  condition: string;
+  body: string[];
+}
+
+/** `if (a) { ... } else if (b) { ... }` at two-space indentation inside a function. */
+function ifChain(branches: Branch[]): string {
+  if (branches.length === 0) return "";
+  const parts = branches.map(
+    (b) => `if (${b.condition}) {\n${b.body.map((line) => `    ${line}\n`).join("")}  }`,
+  );
+  return `  ${parts.join(" else ")}\n`;
+}
+
 export async function generateRunner(options: GenerateRunnerOptions): Promise<void> {
   const { subgraphYamlPath, outputPath } = options;
   const assemblyImport = options.assemblyImport ?? "matchstick-ts/assembly";
@@ -143,8 +189,8 @@ export async function generateRunner(options: GenerateRunnerOptions): Promise<vo
   const handlersByFile = new Map<string, Set<string>>();
   const eventTypeImports = new Map<string, string[]>();
   const contextFunctions: string[] = [];
-  const eventRoutes: string[] = [];
-  const blockRoutes: string[] = [];
+  const eventBranches: Branch[] = [];
+  const blockBranches: Branch[] = [];
   const firstOwner = new Map<string, string>();
 
   for (let i = 0; i < sources.length; i++) {
@@ -156,10 +202,11 @@ export async function generateRunner(options: GenerateRunnerOptions): Promise<vo
     const contextFn = `dataSourceContext${i}`;
     const contextLines = Object.entries(ds.context ?? {}).map(
       ([key, entry]) =>
-        `  context.set(${JSON.stringify(key)}, ${contextValueExpr(entry, `${ds.name}.context.${key}`)});`,
+        `  context.set(${JSON.stringify(key)}, ${contextValueExpr(entry, `${ds.name}.context.${key}`)});\n`,
     );
     contextFunctions.push(
-      `function ${contextFn}(): DataSourceContext {\n  const context = new DataSourceContext();\n${contextLines.map((l) => `${l}\n`).join("")}  return context;\n}`,
+      `/** Manifest \`context:\` of ${template ? "template" : "data source"} ${ds.name}. */\n` +
+        `function ${contextFn}(): DataSourceContext {\n  const context = new DataSourceContext();\n${contextLines.join("")}  return context;\n}\n`,
     );
     const setDataSource = `dataSourceMock.setReturnValues(address, ${JSON.stringify(ds.network ?? "mainnet")}, ${contextFn}());`;
     const dsName = JSON.stringify(ds.name);
@@ -193,214 +240,53 @@ export async function generateRunner(options: GenerateRunnerOptions): Promise<vo
         firstOwner.get(eventName) === ds.name
           ? `(dsName == ${dsName} || dsName == "")`
           : `dsName == ${dsName}`;
-      eventRoutes.push(`    } else if (eventName == "${eventName}" && ${dsMatch}) {
-      ${setDataSource}
-      ${eh.handler}(createMockEvent<${alias}>(params, txHash, blockNum, logIndex, address, blockTimestamp));`);
+      eventBranches.push({
+        condition: `eventName == "${eventName}" && ${dsMatch}`,
+        body: [
+          setDataSource,
+          `${eh.handler}(createMockEvent<${alias}>(params, txHash, blockNum, logIndex, address, blockTimestamp));`,
+        ],
+      });
     }
 
     for (const bh of template ? [] : ds.mapping.blockHandlers ?? []) {
       const kind = bh.filter?.kind;
       if (kind !== undefined && kind !== "once") continue;
       handlers.add(bh.handler);
-      blockRoutes.push(`      } else if (dsName == ${dsName} && handler == "${bh.handler}") {
-        ${setDataSource}
-        ${bh.handler}(block);`);
+      blockBranches.push({
+        condition: `dsName == ${dsName} && handler == "${bh.handler}"`,
+        body: [setDataSource, `${bh.handler}(block);`],
+      });
     }
   }
 
-  const handlerImportLines: string[] = [];
+  const imports = [
+    `import { dataSourceMock } from "matchstick-as/assembly/index";`,
+    `import { BigDecimal, BigInt, Bytes, DataSourceContext, Value } from "@graphprotocol/graph-ts";`,
+    `import { createMockEvent } from "${assemblyImport}";`,
+  ];
   for (const [file, handlerSet] of handlersByFile) {
     if (handlerSet.size === 0) continue;
     const handlerList = [...handlerSet].sort().join(", ");
-    handlerImportLines.push(`import { ${handlerList} } from "${importSpecifier(outputPath, file)}";`);
+    imports.push(`import { ${handlerList} } from "${importSpecifier(outputPath, file)}";`);
+  }
+  for (const [specifier, names] of eventTypeImports) {
+    imports.push(`import { ${names.join(", ")} } from "${specifier}";`);
   }
 
-  const eventTypeImportLines = [...eventTypeImports].map(
-    ([specifier, names]) => `import { ${names.join(", ")} } from "${specifier}";`,
-  );
+  const dispatch = [
+    ...contextFunctions,
+    `function dispatchBlock(dsName: string, handler: string, address: string, block: ethereum.Block): void {\n${ifChain(blockBranches)}}\n`,
+    `function dispatchEvent(\n  eventName: string,\n  dsName: string,\n  address: string,\n  params: JSONValue,\n  txHash: string,\n  blockNum: string,\n  logIndex: string,\n  blockTimestamp: string,\n): void {\n${ifChain(eventBranches)}}`,
+  ].join("\n");
 
-  const code = `import { test, clearStore, readFile, createMockedFunction, dataSourceMock } from "matchstick-as/assembly/index";
-import { Address, BigDecimal, BigInt, Bytes, DataSourceContext, Value, ethereum, json, log, store } from "@graphprotocol/graph-ts";
-import { createMockBlock, createMockEvent, ethereumValueFromTypedJson, JSONObjectBuilder, entityToJson, getAllTrackedTypes, getTrackedIdsForType, jsonString, jsonArray } from "${assemblyImport}";
-${handlerImportLines.join("\n")}
-${eventTypeImportLines.join("\n")}
-
-// Values from each data source's manifest \`context:\`, in manifest order
-// (data sources, then templates).
-${contextFunctions.join("\n\n")}
-
-test("process events and dump store snapshot", () => {
-  clearStore();
-
-  const eventsRaw = readFile("${tempDir}/events.json");
-  const events = json.fromBytes(eventsRaw).toArray();
-
-  // Install view-call mocks for the reads handlers may perform. Each entry
-  // is one of:
-  //   { kind: "revert", address, name, signature }
-  //   { kind: "return", address, name, signature, outputs: [...], returns: [...] }
-  // Entries with no \`kind\` field default to "revert" for backward compat
-  // with pre-v0.4.0 mock payloads.
-  const mocksRaw = readFile("${tempDir}/mocks.json");
-  const mocks = json.fromBytes(mocksRaw).toArray();
-  for (let i = 0; i < mocks.length; i++) {
-    const m = mocks[i].toObject();
-    const addr = Address.fromString(m.get("address")!.toString());
-    const name = m.get("name")!.toString();
-    const sig = m.get("signature")!.toString();
-    const kindVal = m.get("kind");
-    const kind = kindVal != null ? kindVal.toString() : "revert";
-
-    if (kind == "return") {
-      const outputsArr = m.get("outputs")!.toArray();
-      const returnsArr = m.get("returns")!.toArray();
-      const values: ethereum.Value[] = [];
-      for (let j = 0; j < outputsArr.length; j++) {
-        const ty = outputsArr[j].toString();
-        values.push(ethereumValueFromTypedJson(ty, returnsArr[j]));
-      }
-      createMockedFunction(addr, name, sig).returns(values);
-    } else {
-      createMockedFunction(addr, name, sig).reverts();
-    }
-  }
-
-  for (let i = 0; i < events.length; i++) {
-    const evt = events[i].toObject();
-
-    let dsName = "";
-    const dsVal = evt.get("dataSource");
-    if (dsVal != null) {
-      dsName = dsVal.toString();
-    }
-
-    let address = "";
-    const addressVal = evt.get("address");
-    if (addressVal != null) {
-      address = addressVal.toString();
-    }
-
-    // Forward receipt-derived fields onto the matchstick mock event / block
-    // so handlers see realistic \`transaction.hash\` / \`block.number\` /
-    // \`block.timestamp\` / \`logIndex\` / \`address\` instead of the
-    // matchstick-as defaults. Empty strings (when a JSON field is missing)
-    // leave the matchstick default in place.
-    let blockNum = "";
-    const blockNumVal = evt.get("blockNumber");
-    if (blockNumVal != null) {
-      blockNum = blockNumVal.toI64().toString();
-    }
-
-    let blockTimestamp = "";
-    const blockTimestampVal = evt.get("blockTimestamp");
-    if (blockTimestampVal != null) {
-      blockTimestamp = blockTimestampVal.toI64().toString();
-    }
-
-    const triggerVal = evt.get("trigger");
-    if (triggerVal != null && triggerVal.toString() == "block") {
-      const handler = evt.get("handler")!.toString();
-      const block = createMockBlock(blockNum, blockTimestamp);
-      if (false) {
-${blockRoutes.join("\n")}
-      }
-      continue;
-    }
-
-    const eventName = evt.get("event")!.toString();
-    // Pass the JSONValue directly — createMockEvent expects the ordered
-    // array shape \`[[name, value], ...]\`. Calling \`.toObject()\` here would
-    // discard ABI order (TypedMap iteration is not insertion-ordered).
-    const params = evt.get("params")!;
-
-    let txHash = "";
-    const txHashVal = evt.get("transactionHash");
-    if (txHashVal != null) {
-      txHash = txHashVal.toString();
-    }
-
-    let logIndex = "";
-    const logIndexVal = evt.get("logIndex");
-    if (logIndexVal != null) {
-      logIndex = logIndexVal.toI64().toString();
-    }
-
-    if (false) {
-${eventRoutes.join("\n")}
-    }
-  }
-
-  // Read the list of (entityType, id) pairs to dump and emit a nested JSON
-  // snapshot: { [entityType]: { [id]: { ...fields } | null } }
-  // Missing entities are emitted as \`null\` so the orchestrator can distinguish
-  // "asked but not found" from "didn't ask".
-  const readsRaw = readFile("${tempDir}/reads.json");
-  const reads = json.fromBytes(readsRaw).toArray();
-
-  // Group reads by entity type for compact nested output.
-  const byType = new Map<string, JSONObjectBuilder>();
-  const typeOrder: Array<string> = [];
-  // Track seen (entityType:id) pairs to avoid duplicate keys in the JSON output
-  // when a tracked entity is also listed in explicit reads.
-  const seenIds = new Set<string>();
-
-  for (let i = 0; i < reads.length; i++) {
-    const r = reads[i].toObject();
-    const entityType = r.get("entityType")!.toString();
-    const id = r.get("id")!.toString();
-
-    if (!byType.has(entityType)) {
-      byType.set(entityType, new JSONObjectBuilder());
-      typeOrder.push(entityType);
-    }
-
-    const entity = store.get(entityType, id);
-    const value = entity ? entityToJson(entity) : "null";
-    byType.get(entityType)!.setRaw(id, value);
-    seenIds.add(entityType + ":" + id);
-  }
-
-  // Collect entities tracked via trackSave() (injected into save() by the
-  // schema patch). Add them to byType so they appear in SNAPSHOT, and emit a
-  // separate MANIFEST: line with just the discovered IDs.
-  const trackedTypes = getAllTrackedTypes();
-  const manifestBuilder = new JSONObjectBuilder();
-
-  for (let t = 0; t < trackedTypes.length; t++) {
-    const entityType = trackedTypes[t];
-    const trackedIds = getTrackedIdsForType(entityType);
-    const idList: Array<string> = [];
-
-    for (let j = 0; j < trackedIds.length; j++) {
-      const id = trackedIds[j];
-      idList.push(jsonString(id));
-
-      // Only add to SNAPSHOT if not already covered by an explicit read.
-      if (!seenIds.has(entityType + ":" + id)) {
-        if (!byType.has(entityType)) {
-          byType.set(entityType, new JSONObjectBuilder());
-          typeOrder.push(entityType);
-        }
-        const entity = store.get(entityType, id);
-        const value = entity ? entityToJson(entity) : "null";
-        byType.get(entityType)!.setRaw(id, value);
-      }
-    }
-
-    manifestBuilder.setRaw(entityType, jsonArray(idList));
-  }
-
-  log.info("MANIFEST: " + manifestBuilder.toString(), []);
-
-  const outer = new JSONObjectBuilder();
-  for (let i = 0; i < typeOrder.length; i++) {
-    const t = typeOrder[i];
-    outer.setRaw(t, byType.get(t)!.toString());
-  }
-
-  log.info("SNAPSHOT: " + outer.toString(), []);
-});
-`;
+  const template = await readFile(TEMPLATE_URL, "utf8");
+  const code = fillTemplate(template, {
+    header: `// AUTOGENERATED by matchstick-ts from templates/runner.ts and ${subgraphYamlPath} — do not edit.`,
+    imports: imports.join("\n"),
+    config: `const TEMP_DIR = ${JSON.stringify(tempDir)};`,
+    dispatch,
+  }).replaceAll('from "matchstick-ts/assembly"', `from "${assemblyImport}"`);
 
   await writeIfChanged(outputPath, code);
 }
