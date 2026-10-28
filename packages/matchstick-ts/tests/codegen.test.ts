@@ -88,7 +88,7 @@ describe("generateRunner", () => {
       assert.match(text, /evt\.get\("blockTimestamp"\)/);
       assert.match(
         text,
-        /createMockEvent<ValueSet>\(params, txHash, blockNum, logIndex, address, blockTimestamp\)/,
+        /createMockEvent<handleValueSetEvent>\(params, txHash, blockNum, logIndex, address, blockTimestamp\)/,
       );
     } finally {
       await rm(dir, { recursive: true, force: true });

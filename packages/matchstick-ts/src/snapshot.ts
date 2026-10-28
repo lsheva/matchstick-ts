@@ -10,7 +10,9 @@ import { join } from "node:path";
 import { once } from "node:events";
 import type { CallMock, CapturedEvent } from "./event-capture.ts";
 import { generateRunner } from "./codegen/generate-runner.ts";
-import { generateEntities } from "./codegen/generate-entities.ts";
+import { generateEntities, timeseriesEntityTypes } from "./codegen/generate-entities.ts";
+import { readSubgraphManifest } from "./codegen/parse-subgraph-manifest.ts";
+import { buildTriggers } from "./triggers.ts";
 /**
  * Default location for the JSON IO files (`events.json`, `reads.json`,
  * `mocks.json`) shared between the TS orchestrator and the AS runner.
@@ -159,6 +161,15 @@ export interface RunOptions<TEntities = AugmentedEntities> {
    */
   generatedSchemaPath?: string;
   /**
+   * Emulate graph-node for `@entity(timeseries: true)` types: on `save()`,
+   * `id` becomes `(blockNumber << 32) | seq` (seq counts timeseries saves in
+   * the block) and `timestamp` becomes the event's block time in
+   * microseconds, overriding whatever the mapping set. Without this, every
+   * row a mapping creates as `new Data(0)` lands on id `0` and overwrites
+   * the previous one. Requires the generated schema patch. Default `true`.
+   */
+  emulateTimeseries?: boolean;
+  /**
    * Whether to remove the JSON IO files after the run completes. Defaults to
    * true. Set `KEEP_TEMP=1` in the environment to override.
    */
@@ -171,22 +182,44 @@ export interface RunOptions<TEntities = AugmentedEntities> {
 }
 
 /**
- * Patch the `graph codegen`-generated `schema.ts` so that every entity's
- * `save()` method calls `trackSave(entityType, id)` after `store.set(...)`.
- * This is applied temporarily around each `graph test` run — the original is
- * restored in a `finally` block.
+ * Patch the `graph codegen`-generated `schema.ts` for the duration of a
+ * `graph test` run (the original is restored in a `finally` block):
+ *
+ *   - every `save()` calls `trackSave(entityType, id)` after `store.set(...)`;
+ *   - `Timestamp` accessors read and write `Int8` instead, because matchstick
+ *     0.6.0 panics on StoreValueKind 9 ("value 9 is out of range");
+ *   - when `timeseriesTypes` is non-empty, `save()` on those types first calls
+ *     `assignTimeseriesFields(this)`, which overwrites `id` and `timestamp`
+ *     the way graph-node does.
  *
  * The regex matches the consistent pattern emitted by `graph codegen`:
  *   store.set("EntityType", id<expr>, this)
  * where `id<expr>` is `id.toString()`, `id.toI64().toString()`,
  * `id.toBytes().toHexString()`, etc.
  */
-function patchGeneratedSchema(content: string): string {
-  const importLine = 'import { trackSave } from "matchstick-ts/assembly";';
-  const patched = content.replace(
-    /store\.set\(("([^"]+)"),\s*([\w.!()]+),\s*this\)/g,
-    "store.set($1, $3, this);\n      trackSave($1, $3)",
-  );
+export function patchGeneratedSchema(
+  content: string,
+  timeseriesTypes: readonly string[] = [],
+): string {
+  const timeseries = new Set(timeseriesTypes);
+  const importLine =
+    'import { assignTimeseriesFields, trackSave } from "matchstick-ts/assembly";';
+  const patched = content
+    .replace(
+      /store\.set\(("([^"]+)"),\s*([\w.!()]+),\s*this\)/g,
+      (_match, quoted: string, entityType: string, idExpr: string) => {
+        if (!timeseries.has(entityType)) {
+          return `store.set(${quoted}, ${idExpr}, this);\n      trackSave(${quoted}, ${idExpr})`;
+        }
+        return [
+          `const __timeseriesId = assignTimeseriesFields(this);`,
+          `      store.set(${quoted}, __timeseriesId, this);`,
+          `      trackSave(${quoted}, __timeseriesId)`,
+        ].join("\n");
+      },
+    )
+    .replace(/\bValue\.fromTimestamp\(/g, "Value.fromI64(")
+    .replace(/\.toTimestamp\(\)/g, ".toI64()");
   return `${importLine}\n${patched}`;
 }
 
@@ -395,8 +428,9 @@ export async function runMatchstickTest<TEntities = AugmentedEntities>(
     ]);
   }
 
+  const triggers = buildTriggers(await readSubgraphManifest(subgraphYaml), options.events);
   await mkdir(jsonDir, { recursive: true });
-  await writeFile(join(jsonDir, "events.json"), JSON.stringify(options.events, null, 2));
+  await writeFile(join(jsonDir, "events.json"), JSON.stringify(triggers, null, 2));
   await writeFile(join(jsonDir, "reads.json"), JSON.stringify(options.reads, null, 2));
   const mergedCallMocks = [...(options.callMocks ?? []), ...(options.revertMocks ?? [])];
   await writeFile(join(jsonDir, "mocks.json"), JSON.stringify(mergedCallMocks, null, 2));
@@ -407,7 +441,14 @@ export async function runMatchstickTest<TEntities = AugmentedEntities>(
   if (generatedSchemaPath) {
     originalGeneratedSchema = await readFile(generatedSchemaPath, "utf8").catch(() => null);
     if (originalGeneratedSchema !== null) {
-      await writeFile(generatedSchemaPath, patchGeneratedSchema(originalGeneratedSchema));
+      const timeseriesTypes =
+        options.emulateTimeseries === false
+          ? []
+          : timeseriesEntityTypes(await readFile(schemaPath, "utf8"));
+      await writeFile(
+        generatedSchemaPath,
+        patchGeneratedSchema(originalGeneratedSchema, timeseriesTypes),
+      );
     }
   }
 

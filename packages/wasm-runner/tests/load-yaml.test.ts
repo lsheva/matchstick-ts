@@ -34,7 +34,7 @@ test("loadSubgraphYaml: parses the example manifest", async () => {
     return; // example package not present — skip
   }
   const manifest = await loadSubgraphYaml(EXAMPLE_YAML);
-  assert.equal(manifest.specVersion, "1.0.0");
+  assert.equal(manifest.specVersion, "1.1.0");
   assert.equal(manifest.dataSources.length, 1);
   assert.equal(
     manifest.schemaFile,

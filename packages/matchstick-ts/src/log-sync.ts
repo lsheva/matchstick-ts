@@ -88,7 +88,7 @@ function mockKey(mock: CallMock): string {
   return `${mock.address}:${mock.signature}`;
 }
 
-function decodeLogs(logs: readonly Log[], abi: Abi): CapturedEvent[] {
+function decodeLogs(logs: readonly Log[], abi: Abi, dataSource: string): CapturedEvent[] {
   const captured: CapturedEvent[] = [];
 
   for (const log of parseEventLogs({ logs: [...logs] as Log[], abi })) {
@@ -98,6 +98,7 @@ function decodeLogs(logs: readonly Log[], abi: Abi): CapturedEvent[] {
     captured.push({
       event: log.eventName,
       address: log.address,
+      dataSource,
       blockNumber: Number(log.blockNumber),
       logIndex: log.logIndex ?? 0,
       transactionHash: log.transactionHash,
@@ -105,17 +106,7 @@ function decodeLogs(logs: readonly Log[], abi: Abi): CapturedEvent[] {
     });
   }
 
-  captured.sort((a, b) => {
-    if (a.blockNumber !== b.blockNumber) {
-      return a.blockNumber - b.blockNumber;
-    }
-    if (a.transactionHash !== b.transactionHash) {
-      return a.transactionHash.localeCompare(b.transactionHash);
-    }
-    return (a.logIndex ?? 0) - (b.logIndex ?? 0);
-  });
-
-  return captured;
+  return sortCaptured(captured);
 }
 
 /** Attach `blockTimestamp` for each unique block via `eth_getBlockByNumber`. */
@@ -142,12 +133,13 @@ async function attachBlockTimestamps(
   }
 }
 
+/** Chain order: `logIndex` is unique and increasing across a whole block. */
 function sortCaptured(events: CapturedEvent[]): CapturedEvent[] {
   return [...events].sort((a, b) => {
     if (a.blockNumber !== b.blockNumber) {
       return a.blockNumber - b.blockNumber;
     }
-    return a.transactionHash.localeCompare(b.transactionHash);
+    return (a.logIndex ?? 0) - (b.logIndex ?? 0);
   });
 }
 
@@ -307,7 +299,7 @@ export class SubgraphLogSync<TEntities = AugmentedEntities> {
         fromBlock,
         toBlock,
       });
-      const decoded = decodeLogs(logs, source.abi);
+      const decoded = decodeLogs(logs, source.abi, source.name);
       batch.push(...decoded);
     }
 

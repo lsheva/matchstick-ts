@@ -1,0 +1,66 @@
+specVersion: 1.1.0
+schema:
+  file: ../minimal-schema.graphql
+dataSources:
+  - kind: ethereum
+    name: Oracle
+    network: base-sepolia
+    source:
+      address: "0x0000000000000000000000000000000000000002"
+      abi: Oracle
+      startBlock: 40
+    context:
+      feed:
+        type: String
+        data: "0x00000000000000000000000000000000000000aa"
+      startBlock:
+        type: BigInt
+        data: "40"
+      enabled:
+        type: Bool
+        data: true
+      weights:
+        type: List
+        data:
+          - type: Int
+            data: 1
+          - type: Int8
+            data: "9007199254740993"
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities: []
+      abis:
+        - name: Oracle
+          file: ../Counter.json
+      blockHandlers:
+        - handler: initFeeds
+          filter:
+            kind: once
+        - handler: onBlock
+        - handler: onCall
+          filter:
+            kind: call
+      eventHandlers:
+        - event: Updated(uint256)
+          handler: handleUpdated
+      file: ./mapping.ts
+templates:
+  - kind: ethereum
+    name: Aggregator
+    network: base-sepolia
+    source:
+      abi: Aggregator
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities: []
+      abis:
+        - name: Aggregator
+          file: ../Counter.json
+      eventHandlers:
+        - event: AnswerUpdated(indexed int256,indexed uint256,uint256)
+          handler: handleAnswerUpdated
+      file: ./mapping.ts

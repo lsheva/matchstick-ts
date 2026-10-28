@@ -154,3 +154,92 @@ describe("struct/tuple parameter (ConfigUpdated)", () => {
     assert.equal(snap.get("Config", "0", "active"), false);
   });
 });
+
+describe("timeseries entity (ValueSample)", () => {
+  // graph-node assigns timeseries ids as (blockNumber << 32) | seq, with seq
+  // restarting at 0 in each block.
+  const timeseriesId = (block: number, seq: number) => ((BigInt(block) << 32n) | BigInt(seq)).toString();
+
+  it("assigns graph-node ids and block timestamps instead of colliding on id 0", async () => {
+    const snap = await runMatchstickTest({
+      events: [
+        { ...valueSetCaptured(1n, 7), blockTimestamp: 1_700_000_000, logIndex: 0 },
+        { ...valueSetCaptured(2n, 7), blockTimestamp: 1_700_000_000, logIndex: 1 },
+        { ...valueSetCaptured(3n, 8), blockTimestamp: 1_700_000_012 },
+      ],
+      reads: [],
+      callMocks: counterCallMocks,
+    });
+
+    const samples = snap.saved("ValueSample");
+    assert.deepEqual(
+      samples.map((s) => [s.id, s.value, s.timestamp]),
+      [
+        [timeseriesId(7, 0), "1", "1700000000000000"],
+        [timeseriesId(7, 1), "2", "1700000000000000"],
+        [timeseriesId(8, 0), "3", "1700000012000000"],
+      ],
+    );
+  });
+
+  it("can be turned off, leaving the mapping's id and timestamp in place", async () => {
+    const snap = await runMatchstickTest({
+      events: [valueSetCaptured(1n, 7), valueSetCaptured(2n, 8)],
+      reads: [],
+      callMocks: counterCallMocks,
+      emulateTimeseries: false,
+    });
+
+    assert.deepEqual(
+      snap.saved("ValueSample").map((s) => [s.id, s.value, s.timestamp]),
+      [["0", "2", "0"]],
+    );
+  });
+});
+
+describe("block handlers and data source context", () => {
+  const events = [
+    { ...valueSetCaptured(1n, 5), blockTimestamp: 1_000, logIndex: 0, dataSource: "Counter" },
+    { ...valueSetCaptured(2n, 5), blockTimestamp: 1_000, logIndex: 1, dataSource: "Counter" },
+    { ...valueSetCaptured(3n, 9), blockTimestamp: 1_048, logIndex: 0, dataSource: "Counter" },
+  ];
+
+  it("runs the once handler with the manifest context before the first event", async () => {
+    const snap = await runMatchstickTest({ events, reads: [], callMocks: counterCallMocks });
+
+    assert.deepEqual(snap.entity("Init", "0"), {
+      id: "0",
+      label: "primary",
+      threshold: "100",
+      address: COUNTER_ADDRESS,
+      blockNumber: "5",
+    });
+  });
+
+  it("runs the unfiltered handler once per block that carries events", async () => {
+    const snap = await runMatchstickTest({ events, reads: [], callMocks: counterCallMocks });
+
+    assert.deepEqual(
+      snap.saved("BlockTick").map((t) => [t.number, t.timestamp]),
+      [
+        ["5", "1000"],
+        ["9", "1048"],
+      ],
+    );
+  });
+
+  it("routes template events by data source, with an empty context", async () => {
+    const clone = "0x00000000000000000000000000000000000000c1";
+    const snap = await runMatchstickTest({
+      events: [
+        valueSetCaptured(7n, 3),
+        { ...valueSetCaptured(8n, 4), address: clone, dataSource: "CounterClone" },
+      ],
+      reads: [],
+      callMocks: counterCallMocks,
+    });
+
+    assert.deepEqual(snap.saved("Counter").map((c) => c.value), ["7"]);
+    assert.deepEqual(snap.saved("CloneValue"), [{ id: clone, value: "8", hasContext: false }]);
+  });
+});
