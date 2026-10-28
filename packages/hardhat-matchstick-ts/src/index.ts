@@ -17,6 +17,7 @@ const hardhatMatchstickPlugin: HardhatPlugin = {
   npmPackage: "hardhat-matchstick-ts",
   dependencies: () => [import("@nomicfoundation/hardhat-viem")],
   hookHandlers: {
+    config: () => import("./internal/hook-handlers/config.ts"),
     network: () => import("./internal/hook-handlers/network.ts"),
   },
 };
